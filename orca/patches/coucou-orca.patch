@@ -1,0 +1,2078 @@
+diff --git a/NotchBuddy/Resources/Info.plist b/NotchBuddy/Resources/Info.plist
+index 4f0b78b..c66e6ed 100644
+--- a/NotchBuddy/Resources/Info.plist
++++ b/NotchBuddy/Resources/Info.plist
+@@ -23,9 +23,9 @@
+ 	<key>LSUIElement</key>
+ 	<true/>
+ 	<key>NSAccessibilityUsageDescription</key>
+-	<string>Pour lire le titre de la fenêtre active et l'attacher comme contexte.</string>
++	<string>Coucou reads the front window's title to attach it as chat context.</string>
+ 	<key>NSAppleEventsUsageDescription</key>
+-	<string>Pour sauter au terminal et envoyer des mails.</string>
++	<string>Coucou brings your terminal to the front and can send a dropped file by email.</string>
+ 	<key>NSHighResolutionCapable</key>
+ 	<true/>
+ 	<key>NSSupportsAutomaticGraphicsSwitching</key>
+diff --git a/NotchBuddy/Sources/App/AppDelegate.swift b/NotchBuddy/Sources/App/AppDelegate.swift
+index f94af2b..205dbf7 100644
+--- a/NotchBuddy/Sources/App/AppDelegate.swift
++++ b/NotchBuddy/Sources/App/AppDelegate.swift
+@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+         // Warm up Keychain cache on main thread BEFORE any poller or view touches it
+         _ = KeychainStore.shared
+         NSApp.setActivationPolicy(.accessory)
++        FileDropHandler.cleanInbox()
+         setupMenuBarItem()
+         setupIsland()
+     }
+@@ -96,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+         StripePoller.shared.start()
+         CalcomPoller.shared.start()
+         NotionPoller.shared.start()
++        ZaiPoller.shared.start()
++        if AppState.shared.relayEnabled { RelayServer.shared.start(port: UInt16(AppState.shared.relayPort)) }
+         NotificationCenter.default.addObserver(self, selector: #selector(openSettings),
+                                                name: .openFullSettings, object: nil)
+     }
+diff --git a/NotchBuddy/Sources/App/AppState.swift b/NotchBuddy/Sources/App/AppState.swift
+index 2ac8e1b..69da2e7 100644
+--- a/NotchBuddy/Sources/App/AppState.swift
++++ b/NotchBuddy/Sources/App/AppState.swift
+@@ -60,7 +60,7 @@ final class AppState: ObservableObject {
+     }
+ 
+     // In-chat provider + model — picked via the model selector in the prompt view
+-    @Published var chatProvider: ChatProvider = .anthropic {
++    @Published var chatProvider: ChatProvider = .claudeCode {
+         didSet { UserDefaults.standard.set(chatProvider.rawValue, forKey: "chatProvider") }
+     }
+     @Published var googleChatModel: String = ChatProvider.google.defaultModel {
+@@ -69,6 +69,9 @@ final class AppState: ObservableObject {
+     @Published var openAIChatModel: String = ChatProvider.openai.defaultModel {
+         didSet { UserDefaults.standard.set(openAIChatModel, forKey: "openAIChatModel") }
+     }
++    @Published var claudeCodeModel: String = ChatProvider.claudeCode.defaultModel {
++        didSet { UserDefaults.standard.set(claudeCodeModel, forKey: "claudeCodeModel") }
++    }
+ 
+     // The always-on workspace pill (default: VS Code). Persisted.
+     @Published var mainPillId: String = PillCatalog.defaultMainPillId {
+@@ -83,6 +86,15 @@ final class AppState: ObservableObject {
+     /// Fetches models for `provider` if not already loaded or loading.
+     /// Sets `providerModelFetchError` if the key is absent or the request fails.
+     func fetchModelsIfNeeded(for provider: ChatProvider) {
++        if provider == .claudeCode {
++            if ClaudeCodeCLI.locate() == nil {
++                providerModelFetchError[provider] = "Claude Code CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN."
++            } else {
++                providerModelFetchError.removeValue(forKey: provider)
++                fetchedProviderModels[provider] = ClaudeCodeCLI.modelChoices
++            }
++            return
++        }
+         guard !loadingProviderModels.contains(provider),
+               fetchedProviderModels[provider] == nil else { return }
+         guard let apiKey = KeychainStore.shared.get(provider.keychainKey), !apiKey.isEmpty else {
+@@ -94,6 +106,7 @@ final class AppState: ObservableObject {
+         Task {
+             let models: [(id: String, label: String)]
+             switch provider {
++            case .claudeCode: models = []
+             case .anthropic: models = await ClaudeService.fetchModels(apiKey: apiKey)
+             case .google:    models = await ClaudeService.fetchGoogleModels(apiKey: apiKey)
+             case .openai:    models = await ClaudeService.fetchOpenAIModels(apiKey: apiKey)
+@@ -106,6 +119,7 @@ final class AppState: ObservableObject {
+                 // If the saved model isn't in the fetched list, pick a sensible default:
+                 // prefer "sonnet" (Anthropic), "flash" (Google), "mini" (OpenAI); else first.
+                 switch provider {
++                case .claudeCode: break
+                 case .anthropic:
+                     if !models.contains(where: { $0.id == claudeModel }) {
+                         claudeModel = models.first(where: { $0.id.contains("sonnet") })?.id ?? models.first!.id
+@@ -126,6 +140,7 @@ final class AppState: ObservableObject {
+     /// The model currently active for chat (provider-aware).
+     var activeChatModel: String {
+         switch chatProvider {
++        case .claudeCode: return claudeCodeModel
+         case .anthropic: return claudeModel
+         case .google:    return googleChatModel
+         case .openai:    return openAIChatModel
+@@ -194,7 +209,8 @@ final class AppState: ObservableObject {
+     }
+ 
+     // Active integration pills (main workspace pill excluded). Max 4.
+-    @Published var activeIntegrations: Set<String> = ["integration_resend", "integration_n8n", "integration_vercel", "integration_github"] {
++    // Fork default: no service pills until the user checks them in Settings → Active pills.
++    @Published var activeIntegrations: Set<String> = [] {
+         didSet {
+             if let data = try? JSONEncoder().encode(Array(activeIntegrations)) {
+                 UserDefaults.standard.set(data, forKey: "activeIntegrations")
+@@ -202,6 +218,57 @@ final class AppState: ObservableObject {
+         }
+     }
+ 
++    // MARK: - Usage (Claude Code rate limits via status-line relay; Z.ai GLM quota via poller)
++
++    struct ClaudeUsage: Codable, Equatable {
++        var fiveHourPct: Int? = nil
++        var fiveHourResetsAt: Date? = nil
++        var sevenDayPct: Int? = nil
++        var sevenDayResetsAt: Date? = nil
++        var contextPct: Int? = nil        // for the most recently reporting session
++        var contextSessionId: String? = nil
++        var costUSD: Double? = nil
++        var model: String? = nil
++        var updatedAt: Date? = nil
++        var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 600 } ?? true }
++    }
++
++    struct ZaiUsage: Equatable {
++        var fiveHourPct: Int? = nil
++        var fiveHourResetsAt: Date? = nil
++        var weeklyPct: Int? = nil
++        var weeklyResetsAt: Date? = nil
++        var level: String? = nil
++        var updatedAt: Date? = nil
++        var error: String? = nil
++        var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 600 } ?? true }
++    }
++
++    @Published var claudeUsage: ClaudeUsage = ClaudeUsage() {
++        didSet {
++            if let data = try? JSONEncoder().encode(claudeUsage) {
++                UserDefaults.standard.set(data, forKey: "claudeUsage")
++            }
++        }
++    }
++    @Published var zaiUsage: ZaiUsage = ZaiUsage()
++
++    /// True when the right panel should carry the usage card or strip.
++    var usageConfigured: Bool {
++        HookServer.statusLineRelayInstalled()
++            || ZaiKey.resolve() != nil
++            || claudeUsage.updatedAt != nil
++            || zaiUsage.updatedAt != nil
++    }
++
++    // MARK: - Remote relay (HTTP bridge for Claude Code sessions on other machines)
++    @Published var relayEnabled: Bool = false {
++        didSet { UserDefaults.standard.set(relayEnabled, forKey: "relayEnabled") }
++    }
++    @Published var relayPort: Int = 6771 {
++        didSet { UserDefaults.standard.set(relayPort, forKey: "relayPort") }
++    }
++
+     // Pending API result
+     @Published var searchResult: SearchResult? = nil
+ 
+@@ -251,6 +318,11 @@ final class AppState: ObservableObject {
+         if let v = ud.string(forKey: "chatProvider"), let p = ChatProvider(rawValue: v) { chatProvider = p }
+         if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
+         if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
++        if let v = ud.string(forKey: "claudeCodeModel"), !v.isEmpty { claudeCodeModel = v }
++        if let d = ud.data(forKey: "claudeUsage"),
++           let u = try? JSONDecoder().decode(ClaudeUsage.self, from: d) { claudeUsage = u }
++        if let v = ud.object(forKey: "relayEnabled") as? Bool { relayEnabled = v }
++        if let v = ud.object(forKey: "relayPort") as? Int, (1024...65535).contains(v) { relayPort = v }
+         // Migrate old 60s default → 15s
+         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
+             autoCloseInterval = (v == 60) ? 15 : v
+diff --git a/NotchBuddy/Sources/App/ClaudeCodeCLI.swift b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
+new file mode 100644
+index 0000000..d2222f8
+--- /dev/null
++++ b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
+@@ -0,0 +1,160 @@
++import Foundation
++
++/// Runs the locally installed Claude Code CLI in headless mode (`claude -p`) so the chat uses the
++/// user's Claude Code login instead of an API key. Everything here is nonisolated and Sendable;
++/// callers are @MainActor and await the result.
++enum ClaudeCodeCLI {
++
++    struct Output: Sendable {
++        let text: String
++        let sessionId: String?
++        let isError: Bool
++    }
++
++    /// Model choices offered in the picker and in Settings. "default" means: do not pass --model,
++    /// so Claude Code uses whatever the user configured for the CLI itself.
++    static let modelChoices: [(id: String, label: String)] = [
++        ("opus",    "Opus"),
++        ("sonnet",  "Sonnet"),
++        ("haiku",   "Haiku"),
++        ("default", "Default (your Claude Code setting)"),
++    ]
++
++    /// First executable `claude` found. $COUCOU_CLAUDE_BIN wins; then the usual install paths.
++    static func locate() -> String? {
++        let fm = FileManager.default
++        let env = ProcessInfo.processInfo.environment
++        if let p = env["COUCOU_CLAUDE_BIN"], fm.isExecutableFile(atPath: p) { return p }
++        let home = NSHomeDirectory()
++        var candidates = [
++            "\(home)/.local/bin/claude",
++            "/opt/homebrew/bin/claude",
++            "/usr/local/bin/claude",
++            "\(home)/.claude/local/claude",
++            "\(home)/.bun/bin/claude",
++            "\(home)/.npm-global/bin/claude",
++        ]
++        if let nodes = try? fm.contentsOfDirectory(atPath: "\(home)/.nvm/versions/node") {
++            candidates += nodes.sorted().reversed().map { "\(home)/.nvm/versions/node/\($0)/bin/claude" }
++        }
++        return candidates.first { fm.isExecutableFile(atPath: $0) }
++    }
++
++    /// `claude --version`, first line, or nil when the binary is missing or does not answer in 10 s.
++    static func version() async -> String? {
++        guard let bin = locate() else { return nil }
++        guard let r = try? await execute(bin: bin, args: ["--version"], cwd: nil, timeout: 10) else { return nil }
++        return r.stdout.split(separator: "\n").first.map { String($0).trimmingCharacters(in: .whitespaces) }
++    }
++
++    /// One headless turn. Pass `resumeSessionId` to continue a conversation.
++    static func run(prompt: String, systemPrompt: String, model: String?, resumeSessionId: String?,
++                    addDirs: [String], cwd: String?, timeout: TimeInterval = 120) async throws -> Output {
++        guard let bin = locate() else {
++            throw failure("Claude Code CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN.")
++        }
++        var args = ["-p", prompt,
++                    "--output-format", "json",
++                    "--allowedTools", "WebSearch,WebFetch,Read",
++                    "--append-system-prompt", systemPrompt]
++        if let m = model, !m.isEmpty, m != "default" { args += ["--model", m] }
++        if let s = resumeSessionId, !s.isEmpty { args += ["--resume", s] }
++        for d in addDirs { args += ["--add-dir", d] }
++
++        let r = try await execute(bin: bin, args: args, cwd: cwd, timeout: timeout)
++        if r.timedOut {
++            throw failure("Claude Code did not answer within \(Int(timeout)) s.")
++        }
++        guard let data = r.stdout.data(using: .utf8),
++              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
++            let tail = String((r.stderr.isEmpty ? r.stdout : r.stderr).suffix(300))
++                .trimmingCharacters(in: .whitespacesAndNewlines)
++            throw failure(tail.isEmpty ? "Claude Code returned no output (exit \(r.status))." : tail)
++        }
++        let text = (json["result"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++        let isError = (json["is_error"] as? Bool ?? false) || r.status != 0
++        return Output(text: text, sessionId: json["session_id"] as? String, isError: isError)
++    }
++
++    // MARK: - Process plumbing
++
++    private struct Exec: Sendable {
++        let status: Int32
++        let stdout: String
++        let stderr: String
++        let timedOut: Bool
++    }
++
++    private final class DataBox: @unchecked Sendable {
++        var data = Data()
++    }
++
++    private static func execute(bin: String, args: [String], cwd: String?, timeout: TimeInterval) async throws -> Exec {
++        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Exec, Error>) in
++            DispatchQueue.global(qos: .userInitiated).async {
++                let p = Process()
++                p.executableURL = URL(fileURLWithPath: bin)
++                p.arguments = args
++
++                // The CLI finds its Keychain login through USER/LOGNAME and HOME; a GUI app has
++                // them, but set them explicitly so a missing one can never show up as "Not logged in".
++                var env = ProcessInfo.processInfo.environment
++                if env["HOME"] == nil { env["HOME"] = NSHomeDirectory() }
++                if env["USER"] == nil { env["USER"] = NSUserName() }
++                if env["LOGNAME"] == nil { env["LOGNAME"] = NSUserName() }
++                let binDir = (bin as NSString).deletingLastPathComponent
++                let basePath = [binDir, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"].joined(separator: ":")
++                env["PATH"] = env["PATH"].map { basePath + ":" + $0 } ?? basePath
++                for k in env.keys where k.hasPrefix("CLAUDE_CODE_") { env.removeValue(forKey: k) }
++                p.environment = env
++                p.currentDirectoryURL = URL(fileURLWithPath: cwd ?? NSHomeDirectory())
++
++                let outPipe = Pipe()
++                let errPipe = Pipe()
++                p.standardOutput = outPipe
++                p.standardError = errPipe
++                p.standardInput = FileHandle.nullDevice
++
++                do {
++                    try p.run()
++                } catch {
++                    cont.resume(throwing: error)
++                    return
++                }
++
++                let timedOut = DataBox()
++                let killer = DispatchWorkItem {
++                    if p.isRunning {
++                        timedOut.data = Data([1])
++                        p.terminate()
++                    }
++                }
++                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
++
++                // Drain stderr concurrently so a chatty child can never block on a full pipe.
++                let errBox = DataBox()
++                let group = DispatchGroup()
++                group.enter()
++                let errHandle = errPipe.fileHandleForReading
++                DispatchQueue.global().async {
++                    errBox.data = errHandle.readDataToEndOfFile()
++                    group.leave()
++                }
++                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
++                group.wait()
++                p.waitUntilExit()
++                killer.cancel()
++
++                cont.resume(returning: Exec(
++                    status: p.terminationStatus,
++                    stdout: String(data: outData, encoding: .utf8) ?? "",
++                    stderr: String(data: errBox.data, encoding: .utf8) ?? "",
++                    timedOut: !timedOut.data.isEmpty))
++            }
++        }
++    }
++
++    private static func failure(_ message: String) -> NSError {
++        NSError(domain: "ClaudeCodeCLI", code: 0, userInfo: [NSLocalizedDescriptionKey: message])
++    }
++}
+diff --git a/NotchBuddy/Sources/App/ClaudeService.swift b/NotchBuddy/Sources/App/ClaudeService.swift
+index 5144fc4..5a996c8 100644
+--- a/NotchBuddy/Sources/App/ClaudeService.swift
++++ b/NotchBuddy/Sources/App/ClaudeService.swift
+@@ -186,8 +186,12 @@ final class ClaudeService {
+     // Multi-turn conversation messages (for API)
+     private var conversationMessages: [[String: Any]] = []
+ 
++    // Claude Code CLI session id for multi-turn chat (resume)
++    private var claudeCodeSessionId: String?
++
+     func clearConversation() {
+         conversationMessages = []
++        claudeCodeSessionId = nil
+     }
+ 
+     private let systemPrompt = """
+@@ -197,6 +201,46 @@ final class ClaudeService {
+     No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.
+     """
+ 
++    private func chatViaClaudeCode(query: String, context: PromptContext?, state: AppState) async {
++        var prompt = query
++        var addDirs: [String] = []
++        var cwd: String? = nil
++        if claudeCodeSessionId == nil, let context {
++            switch context {
++            case .window(let app, let title, let url):
++                var text = "Context — App: \(app), Window: \(title)"
++                if let url { text += ", URL: \(url)" }
++                prompt = text + "\n\n" + query
++            case .file(let name, let fileURL):
++                if let fileURL {
++                    let dir = fileURL.deletingLastPathComponent().path
++                    addDirs = [dir]; cwd = dir
++                    prompt = "Read the file at \(fileURL.path) with the Read tool first.\nFile: \(name)\n\n" + query
++                } else {
++                    prompt = "File: \(name)\n\n" + query
++                }
++            }
++        }
++        do {
++            let out = try await ClaudeCodeCLI.run(prompt: prompt, systemPrompt: systemPrompt,
++                                                  model: state.claudeCodeModel,
++                                                  resumeSessionId: claudeCodeSessionId,
++                                                  addDirs: addDirs, cwd: cwd)
++            if out.isError {
++                await showError("Claude Code: \(out.text.isEmpty ? "request failed" : out.text)", state: state)
++                return
++            }
++            if let sid = out.sessionId, !sid.isEmpty { claudeCodeSessionId = sid }
++            guard !out.text.isEmpty else { await showError("No response text.", state: state); return }
++            state.chatHistory.append(ChatMessage(role: .assistant, content: out.text))
++            state.stateOverride = nil
++            state.view = .prompt
++            NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
++        } catch {
++            await showError("Claude Code: \(error.localizedDescription)", state: state)
++        }
++    }
++
+     private let webSearchTools: [[String: Any]] = [
+         ["type": "web_search_20250305", "name": "web_search", "max_uses": 5]
+     ]
+@@ -204,6 +248,10 @@ final class ClaudeService {
+     // MARK: - Chat (multi-turn, natural text + web search)
+ 
+     func chat(query: String, context: PromptContext?, state: AppState) async {
++        if state.chatProvider == .claudeCode {
++            await chatViaClaudeCode(query: query, context: context, state: state)
++            return
++        }
+         guard state.chatProvider == .anthropic else {
+             await chatOpenAICompatible(query: query, context: context, state: state)
+             return
+@@ -266,6 +314,7 @@ final class ClaudeService {
+         case .google:  baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+         case .openai:  baseURL = "https://api.openai.com/v1/chat/completions"
+         case .anthropic: return
++        case .claudeCode: return
+         }
+         guard let url = URL(string: baseURL) else { return }
+ 
+@@ -340,6 +389,10 @@ final class ClaudeService {
+     // MARK: - Structured search (M8 — window attach + web search)
+ 
+     func search(query: String, context: PromptContext?, state: AppState) async {
++        if state.chatProvider == .claudeCode {
++            await searchViaClaudeCode(query: query, context: context, state: state)
++            return
++        }
+         guard let key = apiKey, !key.isEmpty else {
+             await showError("Anthropic API key missing. Open settings to configure it.", state: state)
+             return
+@@ -460,7 +513,10 @@ final class ClaudeService {
+             await showError("Unexpected API response.", state: state)
+             return
+         }
++        await handleResultText(text, state: state)
++    }
+ 
++    private func handleResultText(_ text: String, state: AppState) async {
+         // Strip markdown code fences if present, then extract JSON object
+         let cleanText: String
+         if let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}") {
+@@ -500,6 +556,43 @@ final class ClaudeService {
+         NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.proud)
+     }
+ 
++    private func searchViaClaudeCode(query: String, context: PromptContext?, state: AppState) async {
++        var prompt: String
++        var addDirs: [String] = []
++        var cwd: String? = nil
++        switch context {
++        case .window(let appName, let title, let url):
++            prompt = "App: \(appName)\nWindow title: \(title)"
++            if let url { prompt += "\nURL: \(url)" }
++            prompt += "\n\nRequest: \(query)"
++        case .file(let name, let fileURL):
++            if let fileURL {
++                let dir = fileURL.deletingLastPathComponent().path
++                addDirs = [dir]; cwd = dir
++                prompt = "Read the file at \(fileURL.path) with the Read tool first.\nFile: \(name)\n\nRequest: \(query)"
++            } else {
++                prompt = "File: \(name)\n\nRequest: \(query)"
++            }
++        case nil:
++            prompt = query
++        }
++        let system = """
++        You are an assistant built into the notch of a Mac. Reply in English, short and precise.
++        Reply ONLY with valid JSON in this exact format:
++        {"title":"...","items":[{"label":"...","detail":"...","url":"..."}],"note":"..."}
++        Maximum 3 items. "url" is optional. "note" is optional.
++        """
++        do {
++            let out = try await ClaudeCodeCLI.run(prompt: prompt, systemPrompt: system,
++                                                  model: state.claudeCodeModel, resumeSessionId: nil,
++                                                  addDirs: addDirs, cwd: cwd)
++            if out.isError { await showError("Claude Code: \(out.text)", state: state); return }
++            await handleResultText(out.text, state: state)
++        } catch {
++            await showError("Claude Code: \(error.localizedDescription)", state: state)
++        }
++    }
++
+     private func showError(_ message: String, state: AppState) async {
+         state.stateOverride = .error
+         state.noteMessage = message
+diff --git a/NotchBuddy/Sources/App/FileDropView.swift b/NotchBuddy/Sources/App/FileDropView.swift
+index 9a47a33..9d08e06 100644
+--- a/NotchBuddy/Sources/App/FileDropView.swift
++++ b/NotchBuddy/Sources/App/FileDropView.swift
+@@ -43,6 +43,17 @@ final class FileDropNSView: NSView {
+ // MARK: - File drop handler
+ 
+ enum FileDropHandler {
++    /// Dropped files are copied into <support>/inbox for the chat to read. Nothing needs them
++    /// after the app quits, so each launch starts with an empty inbox.
++    static func cleanInbox() {
++        let inbox = HookServer.supportDir.appendingPathComponent("inbox")
++        let fm = FileManager.default
++        guard let items = try? fm.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil) else { return }
++        var removed = 0
++        for item in items where (try? fm.removeItem(at: item)) != nil { removed += 1 }
++        if removed > 0 { appendAppLog("nb.log", "Inbox cleaned: \(removed) file\(removed == 1 ? "" : "s") removed") }
++    }
++
+     @MainActor
+     static func handle(urls: [URL], state: AppState) async {
+         guard let url = urls.first else { return }
+diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
+index a8afb91..8a11f2e 100644
+--- a/NotchBuddy/Sources/App/HookServer.swift
++++ b/NotchBuddy/Sources/App/HookServer.swift
+@@ -206,6 +206,34 @@ final class HookServer: @unchecked Sendable {
+     // View switches only happen if VS Code (or the agent pill) is currently focused.
+     // When not focused: state updates animate the mini bot in the pill; badge shown for alerts.
+ 
++    // MARK: - Status line (Claude Code usage)
++
++    @MainActor
++    private func processStatusLine(_ payload: [String: Any]) {
++        let state = AppState.shared
++        var u = state.claudeUsage
++        func int(_ k: String) -> Int? { (payload[k] as? NSNumber)?.intValue }
++        func date(_ k: String) -> Date? { (payload[k] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) } }
++        if let v = int("five_hour_pct")     { u.fiveHourPct = v }
++        if let d = date("five_hour_resets_at") { u.fiveHourResetsAt = d }
++        if let v = int("seven_day_pct")     { u.sevenDayPct = v }
++        if let d = date("seven_day_resets_at") { u.sevenDayResetsAt = d }
++        if let v = int("context_pct")       { u.contextPct = v; u.contextSessionId = payload["session_id"] as? String }
++        if let c = payload["cost_usd"] as? NSNumber { u.costUSD = c.doubleValue }
++        if let m = payload["model"] as? String, !m.isEmpty { u.model = m }
++        u.updatedAt = Date()
++        let crossed = Self.crossedAlert(old: state.claudeUsage, new: u)
++        state.claudeUsage = u
++        nbLog("StatusLine ctx=\(u.contextPct.map(String.init) ?? "-") 5h=\(u.fiveHourPct.map(String.init) ?? "-") 7d=\(u.sevenDayPct.map(String.init) ?? "-")")
++        if crossed { SoundEngine.shared.play("rate") }
++    }
++
++    /// True when either Claude window moved from below 90 % to 90 % or more.
++    private static func crossedAlert(old: AppState.ClaudeUsage, new: AppState.ClaudeUsage) -> Bool {
++        func up(_ a: Int?, _ b: Int?) -> Bool { (a ?? 0) < 90 && (b ?? 0) >= 90 }
++        return up(old.fiveHourPct, new.fiveHourPct) || up(old.sevenDayPct, new.sevenDayPct)
++    }
++
+     @MainActor
+     private func processEvent(name: String, payload: [String: Any]) {
+         let state = AppState.shared
+@@ -213,8 +241,11 @@ final class HookServer: @unchecked Sendable {
+                      ?? payload["conversation_id"] as? String
+                      ?? "unknown"
+         let cwd = payload["cwd"] as? String ?? ""
+-        let rawName = URL(fileURLWithPath: cwd).lastPathComponent
+-        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        let rawName = Self.lastPathComponent(cwd)
++        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        if let host = payload["remote_host"] as? String, !host.isEmpty {
++            projectName += " @ " + host
++        }
+ 
+         // Determine which pill this event belongs to.
+         // coucou_agent must be lowercase, digits and hyphens, ≤ 24 chars.
+@@ -223,15 +254,15 @@ final class HookServer: @unchecked Sendable {
+ 
+         let termProgram = payload["term_program"] as? String ?? ""
+         let bundleId    = payload["bundle_id"]    as? String ?? ""
++        if name == "StatusLine" { processStatusLine(payload); return }
+ 
+         // Cursor identified solely by its stable Electron bundle ID.
+         // ToDesktop builds other apps too — do not match on "todesktop" alone.
+         let isCursorEditor = bundleId.lowercased() == "com.todesktop.230313mzl4w4u92"
+-        let isVSCodeEditor = !isCursorEditor && (
+-            termProgram.lowercased().contains("vscode") ||
+-            bundleId.lowercased().contains("vscode"))
++        // Fork: VS Code, Orca panes, Ghostty and the remote relay all route to the Claude Code pill.
++        let isSupportedHost = !isCursorEditor && Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
+ 
+-        // Routing: coucou_agent → external pill; Cursor → agent_cursor; VS Code → integration_claude.
++        // Routing: coucou_agent → external pill; Cursor → agent_cursor; supported host → integration_claude.
+         let agentId: String
+         let isExternalAgent: Bool
+         if let agent = validAgent {
+@@ -240,7 +271,7 @@ final class HookServer: @unchecked Sendable {
+         } else if isCursorEditor {
+             agentId = "agent_cursor"
+             isExternalAgent = false
+-        } else if isVSCodeEditor {
++        } else if isSupportedHost {
+             agentId = "integration_claude"
+             isExternalAgent = false
+         } else {
+@@ -429,6 +460,16 @@ final class HookServer: @unchecked Sendable {
+         // Already compact and non-alert: Mochi state update is enough, no expand
+     }
+ 
++    /// Terminals whose Claude Code sessions show in the island and get approval cards.
++    /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
++    /// bundle com.stablyai.orca) and Ghostty. Add more tokens here to support other terminals.
++    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca", "ghostty", "remote"]
++
++    static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
++        let t = termProgram.lowercased(), b = bundleId.lowercased()
++        return supportedTerminalTokens.contains { t.contains($0) || b.contains($0) }
++    }
++
+     // MARK: - Permission request (blocking — Claude Code waits for decision)
+ 
+     @MainActor
+@@ -438,8 +479,11 @@ final class HookServer: @unchecked Sendable {
+                      ?? payload["conversation_id"] as? String
+                      ?? "unknown"
+         let cwd       = payload["cwd"]        as? String ?? ""
+-        let rawName   = URL(fileURLWithPath: cwd).lastPathComponent
+-        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        let rawName   = Self.lastPathComponent(cwd)
++        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        if let host = payload["remote_host"] as? String, !host.isEmpty {
++            projectName += " @ " + host
++        }
+ 
+         // External agents (coucou_agent) do not yet get an approval card — answering
+         // would show a card that looks like a Claude Code request. Reply immediately
+@@ -458,11 +502,9 @@ final class HookServer: @unchecked Sendable {
+         let bundleId    = payload["bundle_id"]    as? String ?? ""
+         // Cursor identified solely by its stable Electron bundle ID.
+         let isCursorEditor = bundleId.lowercased() == "com.todesktop.230313mzl4w4u92"
+-        let isVSCodeEditor = !isCursorEditor && (
+-            termProgram.lowercased().contains("vscode") ||
+-            bundleId.lowercased().contains("vscode"))
++        let isSupportedHost = !isCursorEditor && Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
+         let pillId = isCursorEditor ? "agent_cursor" : "integration_claude"
+-        guard isCursorEditor || isVSCodeEditor else {
++        guard isCursorEditor || isSupportedHost else {
+             Task.detached { [weak self] in
+                 self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+                 close(fd)
+@@ -624,6 +666,12 @@ final class HookServer: @unchecked Sendable {
+ 
+     // MARK: - Project name alias mapping
+ 
++    /// Last path component for POSIX and Windows paths alike (remote sessions send "C:\\Users\\…").
++    private static func lastPathComponent(_ path: String) -> String {
++        let parts = path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).filter { !$0.isEmpty }
++        return parts.last.map(String.init) ?? ""
++    }
++
+     private func aliasProjectName(_ name: String) -> String {
+         let aliases: [String: String] = [
+             "notch-buddy":  "Notch Buddy",
+@@ -636,19 +684,20 @@ final class HookServer: @unchecked Sendable {
+     // MARK: - French step labels
+ 
+     private func frenchStep(tool: String, input: [String: Any]) -> String {
++        // Step labels shown in the ticker. Fork: English, close to the tool names Claude Code uses.
+         let labels: [String: String] = [
+-            "Bash":       "Exécute",
+-            "Read":       "Lit",
+-            "Write":      "Écrit",
+-            "Edit":       "Modifie",
+-            "Glob":       "Cherche",
+-            "Grep":       "Recherche",
+-            "WebSearch":  "Recherche web",
+-            "WebFetch":   "Récupère",
+-            "TodoWrite":  "Tâches",
++            "Bash":       "Bash",
++            "Read":       "Read",
++            "Write":      "Write",
++            "Edit":       "Edit",
++            "Glob":       "Find",
++            "Grep":       "Search",
++            "WebSearch":  "Web search",
++            "WebFetch":   "Fetch",
++            "TodoWrite":  "Todo",
+             "Task":       "Agent",
+-            "LS":         "Liste",
+-            "MultiEdit":  "Modifie",
++            "LS":         "List",
++            "MultiEdit":  "Edit",
+             "NotebookEdit": "Notebook",
+         ]
+         let label = labels[tool] ?? tool
+@@ -701,11 +750,35 @@ final class HookServer: @unchecked Sendable {
+         let pyURL = wrapperURL.deletingLastPathComponent().appendingPathComponent("nb-hook.py")
+         try? nbHookPythonGitHub.write(to: pyURL, atomically: true, encoding: .utf8)
+         _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: pyURL.path)
++        // nb-statusline: shell wrapper (forwards the JSON to Coucou, then runs the previous status line)
++        let slURL = URL(fileURLWithPath: Self.statusLineRelayPath)
++        try? nbStatusLineShell.write(to: slURL, atomically: true, encoding: .utf8)
++        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: slURL.path)
++        // nb-statusline.py: Python relay
++        let slPyURL = slURL.deletingLastPathComponent().appendingPathComponent("nb-statusline.py")
++        try? nbStatusLinePython.write(to: slPyURL, atomically: true, encoding: .utf8)
++        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: slPyURL.path)
+         #endif
+     }
+ 
+     // MARK: - Outdated hook detection
+ 
++    /// True when ~/.claude/settings.json carries a Coucou hook on SessionStart (the installer writes all events together).
++    static func claudeHooksInstalled() -> Bool {
++        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
++            .appendingPathComponent(".claude/settings.json")
++        guard let data = try? Data(contentsOf: settingsURL),
++              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let hooks = settings["hooks"] as? [String: Any],
++              let groups = hooks["SessionStart"] as? [[String: Any]] else { return false }
++        return groups.contains { group in
++            (group["hooks"] as? [[String: Any]])?.contains { hook in
++                let cmd = hook["command"] as? String ?? ""
++                return cmd.contains("NotchBuddy") || cmd.contains("coucou")
++            } ?? false
++        }
++    }
++
+     /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
+     static func hooksNeedUpdate() -> Bool {
+         let settingsURL = FileManager.default.homeDirectoryForCurrentUser
+@@ -819,6 +892,81 @@ final class HookServer: @unchecked Sendable {
+         try newData.write(to: settingsURL, options: .atomic)
+     }
+ 
++    // MARK: - Status-line relay installer (Claude Code settings.statusLine)
++
++    static var statusLineRelayPath: String { supportDir.appendingPathComponent("nb-statusline").path }
++    static var statusLineUpstreamPath: String { supportDir.appendingPathComponent("statusline-upstream.sh").path }
++
++    private static var claudeSettingsURL: URL {
++        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
++    }
++
++    /// True when settings.statusLine.command points at Coucou's relay.
++    static func statusLineRelayInstalled() -> Bool {
++        guard let data = try? Data(contentsOf: claudeSettingsURL),
++              let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let sl = s["statusLine"] as? [String: Any],
++              let cmd = sl["command"] as? String else { return false }
++        return cmd.contains("nb-statusline")
++    }
++
++    /// The command currently configured, if any (shown in Settings before installing).
++    static func currentStatusLineCommand() -> String? {
++        guard let data = try? Data(contentsOf: claudeSettingsURL),
++              let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let sl = s["statusLine"] as? [String: Any] else { return nil }
++        return sl["command"] as? String
++    }
++
++    /// Installs the relay: saves the previous command (if not already ours) to statusline-upstream.sh,
++    /// backs up settings.json, and points settings.statusLine.command at nb-statusline.
++    func installStatusLineRelay() throws {
++        let url = Self.claudeSettingsURL
++        var settings: [String: Any] = [:]
++        if let data = try? Data(contentsOf: url),
++           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { settings = parsed }
++        var sl = settings["statusLine"] as? [String: Any] ?? [:]
++        if let prev = sl["command"] as? String, !prev.isEmpty, !prev.contains("nb-statusline") {
++            let body = "#!/bin/sh\n" + prev + "\n"
++            try body.write(toFile: Self.statusLineUpstreamPath, atomically: true, encoding: .utf8)
++            _ = try? FileManager.default.setAttributes([.posixPermissions: 0o700 as NSNumber], ofItemAtPath: Self.statusLineUpstreamPath)
++        }
++        sl["type"] = "command"
++        sl["command"] = "/bin/sh \"\(Self.statusLineRelayPath.replacingOccurrences(of: "\"", with: "\\\""))\""
++        settings["statusLine"] = sl
++        try Self.writeClaudeSettings(settings, backupFirst: true)
++    }
++
++    /// Removes the relay: restores the saved upstream command, or deletes statusLine if there was none.
++    func uninstallStatusLineRelay() throws {
++        let url = Self.claudeSettingsURL
++        guard let data = try? Data(contentsOf: url),
++              var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
++        guard var sl = settings["statusLine"] as? [String: Any],
++              (sl["command"] as? String)?.contains("nb-statusline") == true else { return }
++        if let saved = try? String(contentsOfFile: Self.statusLineUpstreamPath, encoding: .utf8) {
++            let lines = saved.split(separator: "\n", omittingEmptySubsequences: false)
++            let cmd = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .newlines)
++            if !cmd.isEmpty { sl["command"] = cmd; settings["statusLine"] = sl }
++            else { settings.removeValue(forKey: "statusLine") }
++        } else {
++            settings.removeValue(forKey: "statusLine")
++        }
++        try Self.writeClaudeSettings(settings, backupFirst: true)
++    }
++
++    private static func writeClaudeSettings(_ settings: [String: Any], backupFirst: Bool) throws {
++        let url = claudeSettingsURL
++        if backupFirst, FileManager.default.fileExists(atPath: url.path) {
++            let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
++            let backup = url.deletingLastPathComponent().appendingPathComponent("settings.json.bak-\(f.string(from: Date()))")
++            try? FileManager.default.copyItem(at: url, to: backup)
++        }
++        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
++        let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
++        try data.write(to: url, options: .atomic)
++    }
++
+     // MARK: - App Store: hooks via security-scoped bookmark
+ 
+     #if APPSTORE
+@@ -1532,3 +1680,83 @@ def main():
+ main()
+ sys.exit(0)
+ """
++
++// nb-statusline — Claude Code status-line relay. Forwards the JSON to Coucou in the background,
++// then hands it to the previous status-line command (saved at install time) so its output still shows.
++private let nbStatusLineShell = """
++#!/bin/sh
++# Coucou status-line relay — forwards Claude Code's status JSON to Coucou, then runs the previous status line
++DIR="$(cd "$(dirname "$0")" && pwd)"
++payload=$(cat)
++[ -z "$payload" ] && exit 0
++if xcode-select -p >/dev/null 2>&1; then
++    printf '%s' "$payload" | /usr/bin/python3 "$DIR/nb-statusline.py" >/dev/null 2>&1 &
++fi
++if [ -s "$DIR/statusline-upstream.sh" ]; then
++    printf '%s' "$payload" | /bin/sh "$DIR/statusline-upstream.sh"
++fi
++exit 0
++"""
++
++private let nbStatusLinePython = """
++#!/usr/bin/env python3
++# nb-statusline.py — reads Claude Code status-line JSON on stdin, forwards a compact StatusLine event to Coucou.
++import sys, json, os, socket, time
++
++def main():
++    try:
++        payload = json.loads(sys.stdin.buffer.read() or b'{}')
++    except Exception:
++        return
++    sid = str(payload.get('session_id') or '')
++    # Throttle: at most one event per session every 3 s (Claude Code redraws often while streaming).
++    stamp = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'coucou-statusline-' + (sid[:8] or 'x'))
++    try:
++        if time.time() - os.path.getmtime(stamp) < 3:
++            return
++    except OSError:
++        pass
++    try:
++        open(stamp, 'w').close()
++    except OSError:
++        pass
++    cw = payload.get('context_window') or {}
++    rl = payload.get('rate_limits') or {}
++    fh = rl.get('five_hour') or {}
++    sd = rl.get('seven_day') or {}
++    model = payload.get('model') or {}
++    cost = payload.get('cost') or {}
++    out = {
++        'hook_event_name': 'StatusLine',
++        'session_id': sid,
++        'cwd': payload.get('cwd') or '',
++        'model': model.get('display_name') or model.get('id') or '',
++        'term_program': os.environ.get('TERM_PROGRAM', ''),
++        'bundle_id': os.environ.get('__CFBundleIdentifier', ''),
++    }
++    if isinstance(cw.get('used_percentage'), (int, float)):
++        out['context_pct'] = int(round(cw['used_percentage']))
++    if isinstance(cost.get('total_cost_usd'), (int, float)):
++        out['cost_usd'] = float(cost['total_cost_usd'])
++    if isinstance(fh.get('used_percentage'), (int, float)):
++        out['five_hour_pct'] = int(round(fh['used_percentage']))
++    if isinstance(fh.get('resets_at'), (int, float)):
++        out['five_hour_resets_at'] = int(fh['resets_at'])
++    if isinstance(sd.get('used_percentage'), (int, float)):
++        out['seven_day_pct'] = int(round(sd['used_percentage']))
++    if isinstance(sd.get('resets_at'), (int, float)):
++        out['seven_day_resets_at'] = int(sd['resets_at'])
++    path = os.path.expanduser('~/Library/Application Support/NotchBuddy/nb.sock')
++    try:
++        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        s.settimeout(0.3)
++        s.connect(path)
++        s.sendall((json.dumps(out) + '\\n').encode())
++        s.close()
++    except Exception:
++        pass
++
++if __name__ == '__main__':
++    main()
++    sys.exit(0)
++"""
+diff --git a/NotchBuddy/Sources/App/IslandTypes.swift b/NotchBuddy/Sources/App/IslandTypes.swift
+index 5e506a8..75647ec 100644
+--- a/NotchBuddy/Sources/App/IslandTypes.swift
++++ b/NotchBuddy/Sources/App/IslandTypes.swift
+@@ -70,12 +70,14 @@ enum AgentSource: Equatable {
+ // MARK: - Chat provider
+ 
+ enum ChatProvider: String, CaseIterable, Codable {
++    case claudeCode = "claude-code"
+     case anthropic = "anthropic"
+     case google    = "google"
+     case openai    = "openai"
+ 
+     var displayName: String {
+         switch self {
++        case .claudeCode: "Claude Code"
+         case .anthropic: "Anthropic"
+         case .google:    "Google"
+         case .openai:    "OpenAI"
+@@ -84,6 +86,7 @@ enum ChatProvider: String, CaseIterable, Codable {
+ 
+     var accentHex: String {
+         switch self {
++        case .claudeCode: "#E0A030"
+         case .anthropic: "#E07950"
+         case .google:    "#4285F4"
+         case .openai:    "#10A37F"
+@@ -92,6 +95,7 @@ enum ChatProvider: String, CaseIterable, Codable {
+ 
+     var defaultModel: String {
+         switch self {
++        case .claudeCode: "opus"
+         case .anthropic: "claude-sonnet-4-6"
+         case .google:    "gemini-2.0-flash"
+         case .openai:    "gpt-4o"
+@@ -100,11 +104,20 @@ enum ChatProvider: String, CaseIterable, Codable {
+ 
+     var keychainKey: String {
+         switch self {
++        case .claudeCode: ""
+         case .anthropic: "anthropic-api-key"
+         case .google:    "google-api-key"
+         case .openai:    "openai-api-key"
+         }
+     }
++
++    /// Usable on this Mac: Claude Code when its CLI is installed, an API provider when its key is stored.
++    var isAvailable: Bool {
++        switch self {
++        case .claudeCode: return ClaudeCodeCLI.locate() != nil
++        default:          return !(KeychainStore.shared.get(keychainKey) ?? "").isEmpty
++        }
++    }
+ }
+ 
+ // MARK: - View dimensions (from VIEWS in prototype)
+diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
+index c0e1ec3..b148080 100644
+--- a/NotchBuddy/Sources/App/IslandViewContent.swift
++++ b/NotchBuddy/Sources/App/IslandViewContent.swift
+@@ -37,6 +37,11 @@ struct OverviewView: View {
+ 
+     var agent: AgentTask? { state.focusTask }
+ 
++    /// Other agent pills that share the right panel with the usage card.
++    var others: [AgentTask] { state.tasks.filter { $0.id != state.focusId } }
++    var showUsage: Bool { state.usageConfigured }
++    var panelHidden: Bool { others.isEmpty && !showUsage }
++
+     var body: some View {
+         HStack(spacing: 10) {
+             // Left card: title row + ticker below + ↗ button overlay
+@@ -71,6 +76,12 @@ struct OverviewView: View {
+                                     .lineLimit(1)
+                                     .truncationMode(.tail)
+                                 Spacer(minLength: 2)
++                                if agent.id == "integration_claude", let ctx = state.claudeUsage.contextPct {
++                                    Text("ctx \(ctx)%")
++                                        .font(.system(size: 11))
++                                        .foregroundColor(ctx >= 90 ? Color(hex: "#F26B5B") : (ctx >= 75 ? Color(hex: "#F5A524") : Color(hex: "#6B7079")))
++                                        .fixedSize()
++                                }
+                                 if agent.steps.count > 1 {
+                                     Text("\(min(agent.stepIndex + 1, agent.steps.count))/\(agent.steps.count)")
+                                         .font(.system(size: 11))
+@@ -109,11 +120,24 @@ struct OverviewView: View {
+                     .frame(maxWidth: .infinity, alignment: .trailing)
+                 }
+             }
+-            .frame(width: 322)
++            .frame(width: panelHidden ? nil : 322)
+ 
+-            // Right card: agent pills
+-            CardBackground(wash: nil) {
+-                AgentPillsView(state: state)
++            // Right card: agent pills and/or usage
++            if !others.isEmpty || showUsage {
++                CardBackground(wash: nil) {
++                    VStack(spacing: 0) {
++                        if !others.isEmpty { AgentPillsView(state: state) }
++                        if showUsage {
++                            if others.isEmpty {
++                                UsageCardView(state: state)
++                            } else {
++                                UsageStripView(state: state)
++                                    .padding(.horizontal, 10)
++                                    .padding(.bottom, 8)
++                            }
++                        }
++                    }
++                }
+             }
+         }
+         .onChange(of: state.focusId) { _, _ in showingN8nDetail = false }
+@@ -123,11 +147,14 @@ struct OverviewView: View {
+         guard let task else { return }
+         switch task.id {
+         case "integration_claude":
+-            let vscodeBundleId = "com.microsoft.VSCode"
+-            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == vscodeBundleId }) {
++            // Jump to the app hosting the Claude Code session: Orca first, then VS Code.
++            let hostBundleIds = ["com.stablyai.orca", "com.mitchellh.ghostty", "com.microsoft.VSCode"]
++            if let app = hostBundleIds.compactMap({ id in
++                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
++            }).first {
+                 app.activate(options: .activateIgnoringOtherApps)
+             } else {
+-                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Visual Studio Code.app"))
++                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Orca.app"))
+             }
+         case "integration_resend":
+             NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)
+@@ -886,7 +913,7 @@ struct ModelPickerView: View {
+         VStack(alignment: .leading, spacing: 12) {
+             // Provider chips
+             HStack(spacing: 6) {
+-                ForEach(ChatProvider.allCases, id: \.self) { provider in
++                ForEach(ChatProvider.allCases.filter { $0.isAvailable || $0 == state.chatProvider }, id: \.self) { provider in
+                     Button {
+                         guard provider != state.chatProvider else { return }
+                         withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+@@ -901,6 +928,8 @@ struct ModelPickerView: View {
+                                 .frame(width: 7, height: 7)
+                             Text(provider.displayName)
+                                 .font(.system(size: 12, weight: state.chatProvider == provider ? .semibold : .regular))
++                                .lineLimit(1)
++                                .fixedSize(horizontal: true, vertical: false)
+                         }
+                         .padding(.horizontal, 10)
+                         .padding(.vertical, 6)
+@@ -954,6 +983,7 @@ struct ModelPickerView: View {
+                     ForEach(models, id: \.id) { model in
+                         Button {
+                             switch state.chatProvider {
++                            case .claudeCode: state.claudeCodeModel = model.id
+                             case .anthropic: state.claudeModel = model.id
+                             case .google:    state.googleChatModel = model.id
+                             case .openai:    state.openAIChatModel = model.id
+@@ -1265,7 +1295,7 @@ struct IntegrationCardView: View {
+                    : task.id == "integration_calcom"  ? appState.calcomError
+                    : nil
+         if let err = svcErr { return err }
+-        let isHooks = task.id == "agent_gemini" || task.id == "agent_antigravity"
++        let isHooks = task.id == "integration_claude" || task.id == "agent_gemini" || task.id == "agent_antigravity"
+         let isAI    = task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai"
+         if isConfigured {
+             if isHooks { return "Hooks installed" }
+@@ -1379,7 +1409,7 @@ struct IntegrationCardView: View {
+ 
+                 HStack(spacing: 8) {
+                     if task.id == "integration_claude" {
+-                        Button("Open Visual Studio Code") { openVSCode() }
++                        Button("Open Orca") { openHost() }
+                             .font(.system(size: 11, weight: .medium))
+                             .foregroundColor(Color(hex: task.color).opacity(0.7))
+                             .buttonStyle(.plain)
+@@ -1482,29 +1512,16 @@ struct IntegrationCardView: View {
+         }
+     }
+ 
+-    private func openVSCode() {
+-        let ids = ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
+-        let appURL = ids.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first
+-
+-        // If we have a project folder, open it directly in VS Code
+-        if let cwd = task.sessionCwd, !cwd.isEmpty, let appURL = appURL {
+-            NSWorkspace.shared.open(
+-                [URL(fileURLWithPath: cwd)],
+-                withApplicationAt: appURL,
+-                configuration: .init(),
+-                completionHandler: nil
+-            )
+-            return
+-        }
+-
+-        // No cwd: activate running instance or launch fresh
++    /// Bring the app hosting Claude Code sessions to the front: Orca first, VS Code as fallback.
++    private func openHost() {
++        let ids = ["com.stablyai.orca", "com.mitchellh.ghostty", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
+         if let running = ids.compactMap({ id in
+             NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
+         }).first {
+             running.activate(options: .activateIgnoringOtherApps)
+             return
+         }
+-        if let appURL = appURL {
++        if let appURL = ids.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
+             NSWorkspace.shared.openApplication(at: appURL, configuration: .init(), completionHandler: nil)
+         }
+     }
+@@ -2551,9 +2568,9 @@ struct AgentPill: View {
+     let onTap: () -> Void
+     @State private var isHovered = false
+ 
+-    // VS Code pill always shows "VS Code" label regardless of active project name
++    // integration_claude pill shows its catalog name regardless of active project name
+     private var displayName: String {
+-        task.id == "integration_claude" ? "VS Code" : task.name
++        task.id == "integration_claude" ? (PillCatalog.definition(for: task.id)?.name ?? task.name) : task.name
+     }
+ 
+     var body: some View {
+diff --git a/NotchBuddy/Sources/App/PillCatalog.swift b/NotchBuddy/Sources/App/PillCatalog.swift
+index 65284e7..11291e9 100644
+--- a/NotchBuddy/Sources/App/PillCatalog.swift
++++ b/NotchBuddy/Sources/App/PillCatalog.swift
+@@ -47,8 +47,8 @@ enum PillCatalog {
+     // All declared pills in display order.
+     static let all: [PillDefinition] = [
+         // ── Where you code ───────────────────────────────────────────────────
+-        .init(id: "integration_claude",  name: "VS Code",     color: "#F5F6F8",
+-              category: .workspace, subtitle: "Integration",  source: .claudeCode),
++        .init(id: "integration_claude",  name: "Orca",        color: "#F5F6F8",
++              category: .workspace, subtitle: "Claude Code host", source: .claudeCode),
+         .init(id: "agent_cursor",        name: "Cursor",      color: "#C0C4CC",
+               category: .workspace, subtitle: "Integration",  source: .agent),
+         .init(id: "agent_antigravity",   name: "Antigravity", color: "#E879F9",
+diff --git a/NotchBuddy/Sources/App/RelayServer.swift b/NotchBuddy/Sources/App/RelayServer.swift
+new file mode 100644
+index 0000000..cab790b
+--- /dev/null
++++ b/NotchBuddy/Sources/App/RelayServer.swift
+@@ -0,0 +1,300 @@
++import Foundation
++import Network
++import Security
++
++/// HTTP bridge for Claude Code sessions on other machines. A remote hook relay POSTs the same
++/// JSON object the local Unix socket accepts; this server forwards it to the socket and returns
++/// the socket's reply, so approvals block and resolve exactly like local ones.
++final class RelayServer: @unchecked Sendable {
++    static let shared = RelayServer()
++
++    private let queue = DispatchQueue(label: "coucou.relay", qos: .userInitiated)
++    private var listener: NWListener?
++    private var active = 0
++
++    private static let maxActive = 32
++    private static let maxHeader = 65_536
++    private static let maxBody = 1_048_576
++    private static let requestTimeout: TimeInterval = 15
++    private static let bridgeTimeout: TimeInterval = 122
++
++    private init() {}
++
++    // MARK: - Token
++
++    static var tokenURL: URL { HookServer.supportDir.appendingPathComponent("relay-token") }
++
++    static func token() -> String {
++        if let t = try? String(contentsOf: tokenURL, encoding: .utf8) {
++            let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
++            if trimmed.count >= 16 { return trimmed }
++        }
++        return regenerateToken()
++    }
++
++    @discardableResult
++    static func regenerateToken() -> String {
++        var bytes = [UInt8](repeating: 0, count: 24)
++        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
++        let t = bytes.map { String(format: "%02x", $0) }.joined()
++        try? FileManager.default.createDirectory(at: HookServer.supportDir, withIntermediateDirectories: true)
++        try? t.write(to: tokenURL, atomically: true, encoding: .utf8)
++        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o600 as NSNumber], ofItemAtPath: tokenURL.path)
++        return t
++    }
++
++    /// The Mac's MagicDNS name from the Tailscale CLI, if installed and running. Blocking; call off the main actor.
++    static func tailnetName() -> String? {
++        let candidates = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale",
++                          "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
++        guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
++        let p = Process()
++        p.executableURL = URL(fileURLWithPath: bin)
++        p.arguments = ["status", "--json"]
++        let out = Pipe()
++        p.standardOutput = out
++        p.standardError = FileHandle.nullDevice
++        guard (try? p.run()) != nil else { return nil }
++        let data = out.fileHandleForReading.readDataToEndOfFile()
++        p.waitUntilExit()
++        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let me = json["Self"] as? [String: Any],
++              let dns = me["DNSName"] as? String, !dns.isEmpty else { return nil }
++        let state = json["BackendState"] as? String ?? ""
++        let name = dns.hasSuffix(".") ? String(dns.dropLast()) : dns
++        return state == "Running" ? name : name + " (Tailscale stopped)"
++    }
++
++    // MARK: - Lifecycle
++
++    func start(port: UInt16) { queue.async { self.startLocked(port: port) } }
++    func stop() { queue.async { self.listener?.cancel(); self.listener = nil } }
++    func restart(port: UInt16) { queue.async { self.listener?.cancel(); self.listener = nil; self.startLocked(port: port) } }
++
++    private func startLocked(port: UInt16) {
++        guard listener == nil, let nwPort = NWEndpoint.Port(rawValue: port) else { return }
++        let params = NWParameters.tcp
++        params.allowLocalEndpointReuse = true
++        guard let l = try? NWListener(using: params, on: nwPort) else {
++            appendAppLog("nb.log", "Relay: cannot listen on \(port)")
++            return
++        }
++        l.stateUpdateHandler = { state in
++            switch state {
++            case .ready: appendAppLog("nb.log", "Relay listening on port \(port)")
++            case .failed(let err): appendAppLog("nb.log", "Relay failed: \(err)")
++            default: break
++            }
++        }
++        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
++        l.start(queue: queue)
++        listener = l
++    }
++
++    // MARK: - Connections
++
++    private final class Request: @unchecked Sendable {
++        var buffer = Data()
++        var headerEnd: Int? = nil
++        var method = ""
++        var path = ""
++        var headers: [String: String] = [:]
++        var contentLength = 0
++        var finished = false
++        var released = false
++    }
++
++    private func accept(_ conn: NWConnection) {
++        guard active < Self.maxActive else { conn.cancel(); return }
++        active += 1
++        let req = Request()
++        conn.stateUpdateHandler = { [weak self] state in
++            if case .cancelled = state { self?.release(req) }
++            if case .failed = state { conn.cancel() }
++        }
++        conn.start(queue: queue)
++        queue.asyncAfter(deadline: .now() + Self.requestTimeout) { [weak self] in
++            guard let self, !req.finished else { return }
++            req.finished = true
++            self.respond(conn, 408, #"{"error":"request timeout"}"#)
++        }
++        receive(conn, req)
++    }
++
++    private func release(_ req: Request) {
++        guard !req.released else { return }
++        req.released = true
++        active = max(0, active - 1)
++    }
++
++    private func receive(_ conn: NWConnection, _ req: Request) {
++        conn.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
++            guard let self, !req.finished else { return }
++            if let data { req.buffer.append(data) }
++            if error != nil { req.finished = true; conn.cancel(); return }
++            if req.headerEnd == nil {
++                if let range = req.buffer.range(of: Data("\r\n\r\n".utf8)) {
++                    req.headerEnd = range.upperBound
++                    guard self.parseHead(req) else {
++                        req.finished = true
++                        self.respond(conn, 400, #"{"error":"bad request"}"#)
++                        return
++                    }
++                } else if req.buffer.count > Self.maxHeader {
++                    req.finished = true
++                    self.respond(conn, 431, #"{"error":"headers too large"}"#)
++                    return
++                }
++            }
++            if let end = req.headerEnd {
++                if req.contentLength > Self.maxBody {
++                    req.finished = true
++                    self.respond(conn, 413, #"{"error":"body too large"}"#)
++                    return
++                }
++                if req.buffer.count - end >= req.contentLength {
++                    req.finished = true
++                    let body = req.buffer.subdata(in: end..<(end + req.contentLength))
++                    self.route(conn, req, body: body)
++                    return
++                }
++            }
++            if isComplete { req.finished = true; conn.cancel(); return }
++            self.receive(conn, req)
++        }
++    }
++
++    private func parseHead(_ req: Request) -> Bool {
++        guard let end = req.headerEnd,
++              let head = String(data: req.buffer.prefix(end), encoding: .utf8) else { return false }
++        let lines = head.components(separatedBy: "\r\n").filter { !$0.isEmpty }
++        guard let requestLine = lines.first else { return false }
++        let parts = requestLine.split(separator: " ")
++        guard parts.count >= 2 else { return false }
++        req.method = String(parts[0]).uppercased()
++        req.path = String(parts[1])
++        for line in lines.dropFirst() {
++            guard let colon = line.firstIndex(of: ":") else { continue }
++            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
++            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
++            req.headers[name] = value
++        }
++        req.contentLength = Int(req.headers["content-length"] ?? "0") ?? 0
++        return true
++    }
++
++    // MARK: - Routing
++
++    private func route(_ conn: NWConnection, _ req: Request, body: Data) {
++        let auth = req.headers["authorization"] ?? ""
++        guard auth == "Bearer \(Self.token())" else {
++            appendAppLog("nb.log", "Relay: rejected \(req.method) \(req.path) (bad token)")
++            respond(conn, 401, #"{"error":"unauthorized"}"#)
++            return
++        }
++        switch (req.method, req.path) {
++        case ("GET", "/health"):
++            respond(conn, 200, #"{"ok":true,"app":"coucou"}"#)
++        case ("POST", "/hook"):
++            guard let obj = try? JSONSerialization.jsonObject(with: body), obj is [String: Any] else {
++                appendAppLog("nb.log", "Relay: rejected POST /hook (not a JSON object)")
++                respond(conn, 400, #"{"error":"body must be a JSON object"}"#)
++                return
++            }
++            bridge(body, to: conn)
++        default:
++            respond(conn, 404, #"{"error":"not found"}"#)
++        }
++    }
++
++    // MARK: - Bridge to the Unix socket
++
++    private final class Flag: @unchecked Sendable { var done = false }
++    private final class TimeoutBox: @unchecked Sendable {
++        let work: DispatchWorkItem
++        init(_ work: DispatchWorkItem) { self.work = work }
++    }
++
++    private func bridge(_ body: Data, to conn: NWConnection) {
++        let sock = NWConnection(to: .unix(path: HookServer.socketPath), using: .tcp)
++        let flag = Flag()
++        let timeout = DispatchWorkItem { [weak self] in
++            guard !flag.done else { return }
++            flag.done = true
++            sock.cancel()
++            self?.respond(conn, 504, #"{"permissionDecision":"ask","error":"timeout"}"#)
++        }
++        let timeoutBox = TimeoutBox(timeout)
++        queue.asyncAfter(deadline: .now() + Self.bridgeTimeout, execute: timeout)
++
++        sock.stateUpdateHandler = { [weak self] state in
++            guard let self else { return }
++            switch state {
++            case .ready:
++                var line = body
++                line.append(0x0A)
++                sock.send(content: line, completion: .contentProcessed { err in
++                    if err != nil, !flag.done {
++                        flag.done = true; timeoutBox.work.cancel(); sock.cancel()
++                        self.respond(conn, 502, #"{"error":"socket write failed"}"#)
++                        return
++                    }
++                    self.readLine(sock, Data()) { reply in
++                        guard !flag.done else { return }
++                        flag.done = true; timeoutBox.work.cancel(); sock.cancel()
++                        self.respond(conn, 200, reply ?? #"{"ok":true}"#)
++                    }
++                })
++            case .failed, .waiting:
++                guard !flag.done else { return }
++                flag.done = true; timeoutBox.work.cancel(); sock.cancel()
++                self.respond(conn, 502, #"{"error":"coucou socket unavailable"}"#)
++            default:
++                break
++            }
++        }
++        sock.start(queue: queue)
++    }
++
++    private func readLine(_ sock: NWConnection, _ acc: Data, _ done: @escaping @Sendable (String?) -> Void) {
++        sock.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
++            var acc = acc
++            if let data { acc.append(data) }
++            if let nl = acc.firstIndex(of: 0x0A) {
++                done(String(data: acc.prefix(upTo: nl), encoding: .utf8))
++                return
++            }
++            if error != nil || isComplete {
++                done(acc.isEmpty ? nil : String(data: acc, encoding: .utf8))
++                return
++            }
++            self?.readLine(sock, acc, done)
++        }
++    }
++
++    // MARK: - Response
++
++    private func respond(_ conn: NWConnection, _ status: Int, _ body: String) {
++        let reason: String
++        switch status {
++        case 200: reason = "OK"
++        case 400: reason = "Bad Request"
++        case 401: reason = "Unauthorized"
++        case 404: reason = "Not Found"
++        case 408: reason = "Request Timeout"
++        case 413: reason = "Payload Too Large"
++        case 431: reason = "Request Header Fields Too Large"
++        case 502: reason = "Bad Gateway"
++        case 504: reason = "Gateway Timeout"
++        default:  reason = "Error"
++        }
++        let bodyData = Data(body.utf8)
++        var head = "HTTP/1.1 \(status) \(reason)\r\n"
++        head += "Content-Type: application/json\r\n"
++        head += "Content-Length: \(bodyData.count)\r\n"
++        head += "Connection: close\r\n\r\n"
++        var out = Data(head.utf8)
++        out.append(bodyData)
++        conn.send(content: out, completion: .contentProcessed { _ in conn.cancel() })
++    }
++}
+diff --git a/NotchBuddy/Sources/App/SettingsView.swift b/NotchBuddy/Sources/App/SettingsView.swift
+index 2f84161..2a4716f 100644
+--- a/NotchBuddy/Sources/App/SettingsView.swift
++++ b/NotchBuddy/Sources/App/SettingsView.swift
+@@ -5,6 +5,8 @@ import AppKit
+ struct SettingsView: View {
+     @ObservedObject private var state = AppState.shared
+     @State private var apiKey: String = KeychainStore.shared.get("anthropic-api-key") ?? ""
++    @State private var claudeCLIPath: String? = ClaudeCodeCLI.locate()
++    @State private var claudeCLIVersion: String = ""
+ 
+     // Claude model — dynamic list fetched from the API, static fallback if unavailable
+     private static let fallbackModels: [(id: String, label: String)] = [
+@@ -31,6 +33,79 @@ struct SettingsView: View {
+     @State private var showDiff: Bool = false
+     @State private var pendingHookJSON: String = ""
+     @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
++    @State private var claudeHooksInstalled: Bool = HookServer.claudeHooksInstalled()
++    @State private var relayInstalled: Bool = HookServer.statusLineRelayInstalled()
++    @State private var zaiKey: String = ZaiKey.resolve()?.key ?? ""
++    @State private var zaiKeySource: String? = ZaiKey.resolve()?.source
++    @State private var relayToken: String = RelayServer.token()
++    @State private var relayTailnetName: String = ""
++    @State private var relayTestResult: String = ""
++    @State private var relayPortText: String = String(AppState.shared.relayPort)
++
++    private func confirmRelayInstall() {
++        let alert = NSAlert()
++        alert.messageText = "Install the status-line relay?"
++        let current = HookServer.currentStatusLineCommand()
++        alert.informativeText = "settings.statusLine.command becomes:\n/bin/sh \"\(HookServer.statusLineRelayPath)\"\n\n"
++            + (current.map { $0.contains("nb-statusline") ? "The relay is already installed; it will be refreshed." : "The current command is saved to statusline-upstream.sh and still runs after the relay." }
++               ?? "No status line is configured today; only the relay will run.")
++            + "\n\nA backup of ~/.claude/settings.json is written first."
++        alert.addButton(withTitle: "Install"); alert.addButton(withTitle: "Cancel")
++        guard alert.runModal() == .alertFirstButtonReturn else { return }
++        do { try HookServer.shared.installStatusLineRelay(); relayInstalled = true; statusMessage = "✓ Relay installed. Values appear after the next Claude Code reply." }
++        catch { statusMessage = "❌ \(error.localizedDescription)" }
++    }
++
++    private func confirmRelayRemove() {
++        let alert = NSAlert()
++        alert.messageText = "Remove the status-line relay?"
++        alert.informativeText = "The previous status-line command is restored from statusline-upstream.sh."
++        alert.addButton(withTitle: "Remove"); alert.addButton(withTitle: "Cancel")
++        guard alert.runModal() == .alertFirstButtonReturn else { return }
++        do { try HookServer.shared.uninstallStatusLineRelay(); relayInstalled = false; statusMessage = "✓ Relay removed." }
++        catch { statusMessage = "❌ \(error.localizedDescription)" }
++    }
++
++    private func refreshZaiKeySource() {
++        let r = ZaiKey.resolve()
++        zaiKeySource = r?.source
++        zaiKey = r?.key ?? ""
++    }
++
++    private func applyRelayPort() {
++        guard let p = Int(relayPortText), (1024...65535).contains(p) else {
++            statusMessage = "❌ Port must be between 1024 and 65535."; return
++        }
++        state.relayPort = p
++        if state.relayEnabled { RelayServer.shared.restart(port: UInt16(p)) }
++        statusMessage = "✓ Relay port set to \(p)."
++    }
++
++    private func testRelay() {
++        guard state.relayEnabled else { relayTestResult = "relay is off"; return }
++        let port = state.relayPort
++        let token = relayToken
++        relayTestResult = "testing…"
++        Task {
++            guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return }
++            var req = URLRequest(url: url, timeoutInterval: 5)
++            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
++            do {
++                let (data, resp) = try await URLSession.shared.data(for: req)
++                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
++                relayTestResult = code == 200 ? "ok: \(String(data: data, encoding: .utf8) ?? "")" : "HTTP \(code)"
++            } catch {
++                relayTestResult = "failed: \(error.localizedDescription)"
++            }
++        }
++    }
++
++    private func lookupTailnetName() {
++        Task.detached {
++            let name = RelayServer.tailnetName() ?? "Tailscale not running or CLI not found"
++            await MainActor.run { relayTailnetName = name }
++        }
++    }
+ 
+     #if !APPSTORE
+     @State private var geminiHooksInstalled: Bool = HookServer.geminiHooksInstalled()
+@@ -79,12 +154,48 @@ struct SettingsView: View {
+         )
+     }
+ 
++    private func loadCLIVersion() {
++        Task { claudeCLIVersion = await ClaudeCodeCLI.version() ?? "" }
++    }
++
+     var body: some View {
+         ScrollView {
+             VStack(alignment: .leading, spacing: 18) {
+ 
+                 // MARK: API
+-                GroupBox("Anthropic API") {
++                GroupBox("Claude Code (local)") {
++                    VStack(alignment: .leading, spacing: 8) {
++                        Text("Chat through your Claude Code login (claude -p). No API key needed.")
++                            .font(.system(size: 12)).foregroundColor(.secondary)
++                        HStack(spacing: 6) {
++                            Circle().fill(claudeCLIPath == nil ? Color(hex: "#F4505E") : Color(hex: "#22C55E"))
++                                .frame(width: 8, height: 8)
++                            if let p = claudeCLIPath {
++                                Text("Found: \(p)\(claudeCLIVersion.isEmpty ? "" : " · \(claudeCLIVersion)")")
++                                    .font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
++                            } else {
++                                Text("claude CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN.")
++                                    .font(.system(size: 11))
++                            }
++                        }
++                        Picker("Model", selection: $state.claudeCodeModel) {
++                            ForEach(ClaudeCodeCLI.modelChoices, id: \.id) { m in Text(m.label).tag(m.id) }
++                        }
++                        HStack(spacing: 8) {
++                            Button(state.chatProvider == .claudeCode ? "✓ Used for chat" : "Use Claude Code for chat") {
++                                state.chatProvider = .claudeCode
++                                statusMessage = "✓ Chat now uses Claude Code."
++                            }
++                            .buttonStyle(.borderedProminent)
++                            .disabled(state.chatProvider == .claudeCode || claudeCLIPath == nil)
++                            Button("Re-detect") { claudeCLIPath = ClaudeCodeCLI.locate(); loadCLIVersion() }
++                        }
++                    }
++                    .padding(6)
++                }
++                .task { loadCLIVersion() }
++
++                GroupBox("Anthropic API (optional)") {
+                     VStack(alignment: .leading, spacing: 8) {
+                         SecureField("API key (sk-ant-…)", text: $apiKey)
+                             .textFieldStyle(.roundedBorder)
+@@ -116,7 +227,7 @@ struct SettingsView: View {
+                                 .onChange(of: customModel) { _, value in applyCustomModel(value) }
+                         }
+ 
+-                        Text("Used by the chat. The list comes from your Anthropic account.")
++                        Text("Only needed if you prefer the API over your Claude Code login. The list comes from your Anthropic account.")
+                             .font(.system(size: 11))
+                             .foregroundColor(.secondary)
+                     }
+@@ -161,6 +272,15 @@ struct SettingsView: View {
+                 // MARK: Hooks
+                 GroupBox("Claude Code Hooks") {
+                     VStack(alignment: .leading, spacing: 10) {
++                        HStack(spacing: 6) {
++                            Circle().fill(claudeHooksInstalled ? Color(hex: "#22C55E") : Color(hex: "#F4505E"))
++                                .frame(width: 8, height: 8)
++                            Text(claudeHooksInstalled
++                                 ? "Installed in ~/.claude/settings.json — Claude Code sessions in Orca report to the notch"
++                                 : "Not installed — click Install hooks and confirm the diff")
++                                .font(.system(size: 11))
++                                .foregroundColor(.secondary)
++                        }
+                         if hookNeedsUpdate {
+                             HStack(spacing: 6) {
+                                 Image(systemName: "exclamationmark.triangle.fill")
+@@ -220,8 +340,117 @@ struct SettingsView: View {
+                     .padding(6)
+                 }
+ 
++                GroupBox("Remote sessions") {
++                    VStack(alignment: .leading, spacing: 10) {
++                        Text("Claude Code sessions on other machines reach the notch through this relay. Each event is forwarded to Coucou over HTTP with a token; approvals work the same as local ones.")
++                            .font(.system(size: 12)).foregroundColor(.secondary)
++                        Toggle("Enable relay", isOn: $state.relayEnabled)
++                            .onChange(of: state.relayEnabled) { _, on in
++                                if on { RelayServer.shared.start(port: UInt16(state.relayPort)) } else { RelayServer.shared.stop() }
++                                relayTestResult = ""
++                            }
++                        HStack(spacing: 8) {
++                            Text("Port").font(.system(size: 12))
++                            TextField("6771", text: $relayPortText)
++                                .textFieldStyle(.roundedBorder).frame(width: 80)
++                                .onSubmit { applyRelayPort() }
++                            Button("Apply") { applyRelayPort() }
++                        }
++                        HStack(spacing: 8) {
++                            Text("Token").font(.system(size: 12))
++                            Text(relayToken).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
++                            Button("Copy") {
++                                NSPasteboard.general.clearContents()
++                                NSPasteboard.general.setString(relayToken, forType: .string)
++                                statusMessage = "✓ Token copied."
++                            }
++                            Button("Regenerate") {
++                                relayToken = RelayServer.regenerateToken()
++                                statusMessage = "✓ New token. Update the remote machines."
++                            }
++                        }
++                        VStack(alignment: .leading, spacing: 2) {
++                            Text("This Mac on the LAN: \(ProcessInfo.processInfo.hostName)")
++                                .font(.system(size: 11, design: .monospaced))
++                            Text("On the tailnet: \(relayTailnetName.isEmpty ? "looking up…" : relayTailnetName)")
++                                .font(.system(size: 11, design: .monospaced))
++                        }
++                        HStack(spacing: 10) {
++                            Button("Test") { testRelay() }
++                            if !relayTestResult.isEmpty {
++                                Text(relayTestResult).font(.system(size: 11)).foregroundColor(.secondary)
++                            }
++                        }
++                        Text("Remote install: scripts/remote/ in the coucou-orca repo. Point it at one of the names above, this port and the token.")
++                            .font(.system(size: 10.5)).foregroundColor(.secondary)
++                    }
++                    .padding(6)
++                }
++                .task { lookupTailnetName() }
++
+                 // MARK: Gemini CLI Hooks / Antigravity Hooks
+                 #if !APPSTORE
++                GroupBox("Usage card") {
++                    VStack(alignment: .leading, spacing: 10) {
++                        Text("Shows Claude Code's 5-hour and 7-day limits and the Z.ai GLM quota in the island's right panel.")
++                            .font(.system(size: 12)).foregroundColor(.secondary)
++
++                        // Claude: status-line relay
++                        HStack(spacing: 6) {
++                            Circle().fill(relayInstalled ? Color(hex: "#22C55E") : Color(hex: "#F4505E")).frame(width: 8, height: 8)
++                            Text(relayInstalled
++                                 ? "Status-line relay installed — Claude Code reports limits to the notch"
++                                 : "Status-line relay not installed — Claude limits unavailable")
++                                .font(.system(size: 11)).foregroundColor(.secondary)
++                        }
++                        HStack(spacing: 10) {
++                            Button(relayInstalled ? "Reinstall relay" : "Install relay") { confirmRelayInstall() }
++                                .buttonStyle(.borderedProminent)
++                            Button("Remove relay") { confirmRelayRemove() }
++                                .buttonStyle(.bordered).disabled(!relayInstalled)
++                        }
++                        Text("Wraps the current status line (Orca's) and keeps running it. Backs up settings.json first.")
++                            .font(.system(size: 10.5)).foregroundColor(.secondary)
++
++                        Divider()
++
++                        // GLM: Z.ai key
++                        HStack(spacing: 8) {
++                            Circle().fill(Color(hex: "#E0A030")).frame(width: 8, height: 8)
++                            Text("Z.ai GLM coding plan").font(.system(size: 12, weight: .semibold))
++                        }
++                        HStack(spacing: 6) {
++                            Circle().fill(zaiKeySource == nil ? Color(hex: "#F4505E") : Color(hex: "#22C55E")).frame(width: 8, height: 8)
++                            Text(zaiKeySource.map { "Key from \($0)" } ?? "No key: pi's provider config has none, and nothing is saved here")
++                                .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
++                        }
++                        Text("Read from pi's config by default. Paste one here only to override; it is kept in a private file, never in the Keychain, so rebuilds never trigger an access prompt.")
++                            .font(.system(size: 10.5)).foregroundColor(.secondary)
++                        SecureField("Z.ai API key (override)", text: $zaiKey).textFieldStyle(.roundedBorder)
++                        HStack(spacing: 10) {
++                            Button("Save override") {
++                                ZaiKey.save(zaiKey)
++                                refreshZaiKeySource()
++                                ZaiPoller.shared.pollNow()
++                                statusMessage = "✓ Z.ai key saved in Coucou."
++                            }.buttonStyle(.borderedProminent)
++                            Button("Use pi's key") {
++                                ZaiKey.clear()
++                                refreshZaiKeySource()
++                                ZaiPoller.shared.pollNow()
++                                statusMessage = zaiKeySource == nil ? "No key in pi's config." : "✓ Using pi's key."
++                            }
++                        }
++                        if let e = state.zaiUsage.error {
++                            Text(e).font(.system(size: 11)).foregroundColor(.red)
++                        } else if let t = state.zaiUsage.updatedAt {
++                            Text("Last poll \(t.formatted(date: .omitted, time: .shortened)) · plan \(state.zaiUsage.level ?? "?") · 5h \(state.zaiUsage.fiveHourPct ?? 0)% · week \(state.zaiUsage.weeklyPct ?? 0)%")
++                                .font(.system(size: 11)).foregroundColor(.secondary)
++                        }
++                    }
++                    .padding(6)
++                }
++
+                 GroupBox("Gemini CLI Hooks") {
+                     VStack(alignment: .leading, spacing: 10) {
+                         Text(geminiHooksInstalled
+@@ -612,6 +841,7 @@ struct SettingsView: View {
+             statusMessage = "✓ Hooks installed in ~/.claude/settings.json"
+             pendingHookJSON = ""
+             hookNeedsUpdate = false
++            claudeHooksInstalled = HookServer.claudeHooksInstalled()
+         } catch {
+             statusMessage = "❌ Write error: \(error.localizedDescription)"
+         }
+@@ -621,6 +851,7 @@ struct SettingsView: View {
+         do {
+             try HookServer.shared.uninstallClaudeHooks()
+             statusMessage = "✓ Hooks removed."
++            claudeHooksInstalled = HookServer.claudeHooksInstalled()
+         } catch {
+             statusMessage = "❌ \(error.localizedDescription)"
+         }
+diff --git a/NotchBuddy/Sources/App/UsageViews.swift b/NotchBuddy/Sources/App/UsageViews.swift
+new file mode 100644
+index 0000000..eb43d39
+--- /dev/null
++++ b/NotchBuddy/Sources/App/UsageViews.swift
+@@ -0,0 +1,197 @@
++import SwiftUI
++
++// Shared usage-card palette.
++private let claudeBarBase = Color(hex: "#5B8DEF")
++private let glmBarBase = Color(hex: "#E0A030")
++
++/// nil → grey track, ≥ 90 → red, ≥ 75 → amber, else the provider base colour.
++private func barColor(pct: Int?, base: Color) -> Color {
++    guard let p = pct else { return Color(hex: "#3B4559") }
++    if p >= 90 { return Color(hex: "#F26B5B") }
++    if p >= 75 { return Color(hex: "#F5A524") }
++    return base
++}
++
++private func pctText(_ p: Int?) -> String {
++    p.map { "\($0)%" } ?? "—"
++}
++
++/// nil → "", within the next 24 h → "HH:mm" (a window that ends after midnight still shows its
++/// clock time), otherwise → "EEE HH:mm" (e.g. "Mon 09:00"). Past dates show "now".
++private func resetText(_ d: Date?) -> String {
++    guard let d = d else { return "" }
++    let delta = d.timeIntervalSinceNow
++    if delta <= 0 { return "now" }
++    let f = DateFormatter()
++    f.locale = Locale.current
++    f.dateFormat = delta < 24 * 3600 ? "HH:mm" : "EEE HH:mm"
++    return f.string(from: d)
++}
++
++private func timeHHmm(_ d: Date?) -> String {
++    guard let d = d else { return "" }
++    let f = DateFormatter()
++    f.locale = Locale.current
++    f.dateFormat = "HH:mm"
++    return f.string(from: d)
++}
++
++private func fullWhen(_ d: Date) -> String {
++    let f = DateFormatter()
++    f.locale = Locale.current
++    f.dateFormat = "EEE HH:mm"
++    return f.string(from: d)
++}
++
++private func joinResets(_ a: Date?, _ b: Date?) -> String {
++    [resetText(a), resetText(b)].filter { !$0.isEmpty }.joined(separator: " · ")
++}
++
++/// One labelled progress bar row: 48-pt label, flexible track, 36-pt monospaced value.
++private struct UsageRow: View {
++    let label: String
++    let pct: Int?
++    let base: Color
++    let dim: Bool
++
++    var body: some View {
++        HStack(spacing: 6) {
++            Text(label)
++                .font(.system(size: 10.5))
++                .foregroundColor(Color(hex: "#9AA3B2"))
++                .frame(width: 40, alignment: .leading)
++            GeometryReader { geo in
++                ZStack(alignment: .leading) {
++                    Capsule().fill(Color(hex: "#1E2330"))
++                    Capsule().fill(barColor(pct: pct, base: base))
++                        .frame(width: max(0, min(100, Double(pct ?? 0))) / 100 * geo.size.width)
++                }
++            }
++            .frame(height: 6)
++            Text(pctText(pct))
++                .font(.system(size: 10.5, design: .monospaced))
++                .foregroundColor(Color(hex: "#C9D0DB"))
++                .frame(width: 30, alignment: .trailing)
++        }
++        .opacity(dim ? 0.45 : 1)
++    }
++}
++
++/// 4-pt mini bar for the one-line strip.
++private struct MiniBar: View {
++    let pct: Int?
++    let base: Color
++
++    var body: some View {
++        GeometryReader { geo in
++            ZStack(alignment: .leading) {
++                Capsule().fill(Color(hex: "#1E2330"))
++                Capsule().fill(barColor(pct: pct, base: base))
++                    .frame(width: max(0, min(100, Double(pct ?? 0))) / 100 * geo.size.width)
++            }
++        }
++        .frame(width: 44, height: 4)
++    }
++}
++
++/// Full card: two groups, two bars each. Used when no agent pills share the panel.
++struct UsageCardView: View {
++    @ObservedObject var state: AppState
++
++    var body: some View {
++        HStack(alignment: .top, spacing: 10) {
++            VStack(alignment: .leading, spacing: 6) { claudeSection }
++                .frame(maxWidth: .infinity, alignment: .leading)
++            Rectangle().fill(Color(hex: "#1E2330")).frame(width: 1)
++            VStack(alignment: .leading, spacing: 6) { glmSection }
++                .frame(maxWidth: .infinity, alignment: .leading)
++        }
++        .padding(12)
++    }
++
++    private var titleFont: Font { .system(size: 9.5).monospaced() }
++    private var titleColor: Color { Color(hex: "#7F8A9B") }
++
++    @ViewBuilder
++    private var claudeSection: some View {
++        let c = state.claudeUsage
++        if c.updatedAt == nil {
++            Text("claude").font(titleFont).foregroundColor(titleColor)
++            Text(HookServer.statusLineRelayInstalled() ? "not reporting yet" : "install the relay in Settings")
++                .font(titleFont).foregroundColor(titleColor).lineLimit(2)
++        } else {
++            Text(c.isStale ? "claude · as of \(timeHHmm(c.updatedAt))" : "claude")
++                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
++            UsageRow(label: "5 hour", pct: c.fiveHourPct, base: claudeBarBase, dim: c.isStale)
++            UsageRow(label: "7 day", pct: c.sevenDayPct, base: claudeBarBase, dim: c.isStale)
++            Text("resets \(joinResets(c.fiveHourResetsAt, c.sevenDayResetsAt))")
++                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
++        }
++    }
++
++    @ViewBuilder
++    private var glmSection: some View {
++        let g = state.zaiUsage
++        if let e = g.error {
++            Text("glm").font(titleFont).foregroundColor(titleColor)
++            Text(e).font(titleFont).foregroundColor(Color(hex: "#F26B5B")).lineLimit(2)
++        } else if ZaiKey.resolve() == nil {
++            Text("glm").font(titleFont).foregroundColor(titleColor)
++            Text("add the Z.ai key in Settings").font(titleFont).foregroundColor(titleColor).lineLimit(2)
++        } else {
++            Text("glm · z.ai \(g.level ?? "")" + (g.isStale ? " · as of \(timeHHmm(g.updatedAt))" : ""))
++                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
++            UsageRow(label: "5 hour", pct: g.fiveHourPct, base: glmBarBase, dim: g.isStale)
++            UsageRow(label: "weekly", pct: g.weeklyPct, base: glmBarBase, dim: g.isStale)
++            Text("resets \(joinResets(g.fiveHourResetsAt, g.weeklyResetsAt))")
++                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
++        }
++    }
++}
++
++/// One-line strip: "C ▮▮▮ 61 · 23   G ▮ 3 · 18". Used under the pills when workers run.
++struct UsageStripView: View {
++    @ObservedObject var state: AppState
++
++    var body: some View {
++        let c = state.claudeUsage
++        let g = state.zaiUsage
++        let cKnown = c.fiveHourPct != nil || c.sevenDayPct != nil
++        let cMax = max(c.fiveHourPct ?? 0, c.sevenDayPct ?? 0)
++        let gKnown = g.fiveHourPct != nil || g.weeklyPct != nil
++        let gMax = max(g.fiveHourPct ?? 0, g.weeklyPct ?? 0)
++        return HStack(spacing: 6) {
++            Text("C")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(claudeBarBase)
++            MiniBar(pct: cKnown ? cMax : nil, base: claudeBarBase)
++            Text("\(c.fiveHourPct.map(String.init) ?? "—") · \(c.sevenDayPct.map(String.init) ?? "—")")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(cKnown && cMax >= 90 ? Color(hex: "#F26B5B") : Color(hex: "#C9D0DB"))
++            Spacer().frame(width: 6)
++            Text("G")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(glmBarBase)
++            MiniBar(pct: gKnown ? gMax : nil, base: glmBarBase)
++            Text("\(g.fiveHourPct.map(String.init) ?? "—") · \(g.weeklyPct.map(String.init) ?? "—")")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(gKnown && gMax >= 90 ? Color(hex: "#F26B5B") : Color(hex: "#C9D0DB"))
++        }
++        .frame(height: 16)
++        .help(helpText)
++    }
++
++    private var helpText: String {
++        let c = state.claudeUsage
++        let g = state.zaiUsage
++        var cl = "Claude: 5h \(pctText(c.fiveHourPct))"
++        if let d = c.fiveHourResetsAt { cl += " (resets \(fullWhen(d)))" }
++        cl += " · 7d \(pctText(c.sevenDayPct))"
++        if let d = c.sevenDayResetsAt { cl += " (resets \(fullWhen(d)))" }
++        var gl = "GLM: 5h \(pctText(g.fiveHourPct))"
++        if let d = g.fiveHourResetsAt { gl += " (resets \(fullWhen(d)))" }
++        gl += " · weekly \(pctText(g.weeklyPct))"
++        if let d = g.weeklyResetsAt { gl += " (resets \(fullWhen(d)))" }
++        return cl + "\n" + gl
++    }
++}
+diff --git a/NotchBuddy/Sources/App/ZaiPoller.swift b/NotchBuddy/Sources/App/ZaiPoller.swift
+new file mode 100644
+index 0000000..2c41026
+--- /dev/null
++++ b/NotchBuddy/Sources/App/ZaiPoller.swift
+@@ -0,0 +1,118 @@
++import Foundation
++import SwiftUI
++
++/// Where the Z.ai coding-plan key comes from. No Keychain on purpose: an ad-hoc signed app changes
++/// identity on every rebuild, so a Keychain item would prompt for access again and again.
++/// Order: a key saved from Coucou's Settings (file, mode 0600) wins; otherwise pi's own provider
++/// config, which the user maintains anyway for the glm workers.
++enum ZaiKey {
++    static var fileURL: URL { HookServer.supportDir.appendingPathComponent("zai-api-key") }
++    static var piConfigURL: URL {
++        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent/models.json")
++    }
++
++    /// (key, human-readable source) or nil when nothing usable exists.
++    static func resolve() -> (key: String, source: String)? {
++        if let s = try? String(contentsOf: fileURL, encoding: .utf8) {
++            let k = s.trimmingCharacters(in: .whitespacesAndNewlines)
++            if !k.isEmpty { return (k, "saved in Coucou") }
++        }
++        if let data = try? Data(contentsOf: piConfigURL),
++           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++           let providers = json["providers"] as? [String: Any],
++           let zai = providers["zai"] as? [String: Any],
++           let k = zai["apiKey"] as? String, !k.isEmpty, !k.hasPrefix("env:") {
++            return (k, "pi config (~/.pi/agent/models.json)")
++        }
++        return nil
++    }
++
++    static func save(_ key: String) {
++        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
++        if k.isEmpty { clear(); return }
++        try? FileManager.default.createDirectory(at: HookServer.supportDir, withIntermediateDirectories: true)
++        try? k.write(to: fileURL, atomically: true, encoding: .utf8)
++        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o600 as NSNumber], ofItemAtPath: fileURL.path)
++    }
++
++    static func clear() { try? FileManager.default.removeItem(at: fileURL) }
++}
++
++/// Polls the Z.ai GLM coding-plan quota (5-hour and weekly windows) for the usage card.
++final class ZaiPoller: @unchecked Sendable {
++    static let shared = ZaiPoller()
++    private var timer: DispatchSourceTimer?
++
++    private init() {}
++
++    func start() {
++        guard timer == nil else { return }
++        let t = DispatchSource.makeTimerSource(queue: .global(qos: .background))
++        t.schedule(deadline: .now() + 4, repeating: 60)
++        t.setEventHandler { [weak self] in self?.poll() }
++        t.resume()
++        timer = t
++    }
++
++    func pollNow() { poll() }
++
++    private func poll() {
++        guard let key = ZaiKey.resolve()?.key else { return }
++        fetchQuota(key: key)
++    }
++
++    private func fetchQuota(key: String) {
++        guard let url = URL(string: "https://api.z.ai/api/monitor/usage/quota/limit") else { return }
++        var req = URLRequest(url: url, timeoutInterval: 15)
++        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
++        req.setValue("application/json", forHTTPHeaderField: "Accept")
++        req.setValue("en-US,en", forHTTPHeaderField: "Accept-Language")
++
++        URLSession.shared.dataTask(with: req) { data, response, error in
++            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
++            if code != 200 {
++                let errMsg = code == 0 ? (error?.localizedDescription ?? "Z.ai no connection") : "Zai \(code)"
++                DispatchQueue.main.async { AppState.shared.zaiUsage.error = errMsg }
++                return
++            }
++            guard let data,
++                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++                  let d = json["data"] as? [String: Any] else { return }
++
++            var fiveHourPct: Int? = nil
++            var fiveHourResetsAt: Date? = nil
++            var weeklyPct: Int? = nil
++            var weeklyResetsAt: Date? = nil
++            let level = d["level"] as? String
++            if let limits = d["limits"] as? [[String: Any]] {
++                for l in limits {
++                    let unit = (l["unit"] as? NSNumber)?.intValue ?? 0
++                    let pct = (l["percentage"] as? NSNumber)?.intValue
++                    let reset = (l["nextResetTime"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
++                    if unit == 3 { fiveHourPct = pct; fiveHourResetsAt = reset }
++                    if unit == 6 { weeklyPct = pct; weeklyResetsAt = reset }
++                }
++            }
++
++            let fh = fiveHourPct, fr = fiveHourResetsAt
++            let wk = weeklyPct, wr = weeklyResetsAt
++            let lv = level ?? ""
++            DispatchQueue.main.async {
++                let state = AppState.shared
++                let prev = state.zaiUsage
++                var u = prev
++                u.fiveHourPct = fh
++                u.fiveHourResetsAt = fr
++                u.weeklyPct = wk
++                u.weeklyResetsAt = wr
++                u.level = lv.isEmpty ? nil : lv
++                u.error = nil
++                u.updatedAt = Date()
++                state.zaiUsage = u
++                appendAppLog("nb.log", "Zai 5h=\(fh.map(String.init) ?? "-") wk=\(wk.map(String.init) ?? "-") level=\(lv.isEmpty ? "-" : lv)")
++                func up(_ a: Int?, _ b: Int?) -> Bool { (a ?? 0) < 90 && (b ?? 0) >= 90 }
++                if up(prev.fiveHourPct, fh) || up(prev.weeklyPct, wk) { SoundEngine.shared.play("rate") }
++            }
++        }.resume()
++    }
++}
+diff --git a/NotchBuddy/project.yml b/NotchBuddy/project.yml
+index e1041f6..0836c84 100644
+--- a/NotchBuddy/project.yml
++++ b/NotchBuddy/project.yml
+@@ -67,8 +67,8 @@ targets:
+         LSUIElement: YES
+         NSHighResolutionCapable: YES
+         NSSupportsAutomaticGraphicsSwitching: YES
+-        NSAppleEventsUsageDescription: "Pour sauter au terminal et envoyer des mails."
+-        NSAccessibilityUsageDescription: "Pour lire le titre de la fenêtre active et l'attacher comme contexte."
++        NSAppleEventsUsageDescription: "Coucou brings your terminal to the front and can send a dropped file by email."
++        NSAccessibilityUsageDescription: "Coucou reads the front window's title to attach it as chat context."
+     settings:
+       base:
+         PRODUCT_BUNDLE_IDENTIFIER: fr.louisraille.NotchBuddy

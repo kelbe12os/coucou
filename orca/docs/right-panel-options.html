@@ -1,0 +1,346 @@
+<title>Right Panel Options</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#F6F7F9; --panel:#FFFFFF; --ink:#1C2230; --ink-2:#4A5467; --ink-3:#7C8699;
+  --rule:#DCE1E8; --code-bg:#EEF1F5; --accent:#B8720A; --accent-soft:#FBF1DD;
+  --ok:#2E7D4F; --ok-soft:#E3F2E9; --bad:#B4382E; --bad-soft:#F9E5E3; --info:#2F5FB3; --info-soft:#E4ECFA;
+  --sans:"IBM Plex Sans",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#13171F; --panel:#1A2029; --ink:#E7EBF1; --ink-2:#B3BCCA; --ink-3:#7F8A9B;
+    --rule:#2B3340; --code-bg:#0F1319; --accent:#F0B24A; --accent-soft:#2E2512;
+    --ok:#6CC594; --ok-soft:#15291E; --bad:#F08A80; --bad-soft:#331B19; --info:#8AB0F0; --info-soft:#17233A;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#13171F; --panel:#1A2029; --ink:#E7EBF1; --ink-2:#B3BCCA; --ink-3:#7F8A9B;
+  --rule:#2B3340; --code-bg:#0F1319; --accent:#F0B24A; --accent-soft:#2E2512;
+  --ok:#6CC594; --ok-soft:#15291E; --bad:#F08A80; --bad-soft:#331B19; --info:#8AB0F0; --info-soft:#17233A;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.55;padding-inline:16px;padding-block:0 64px}
+.wrap{max-width:1040px;margin:0 auto}
+header.top{padding-block:40px 24px;border-bottom:1px solid var(--rule)}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h1{font-size:clamp(28px,4vw,38px);line-height:1.12;font-weight:600;margin:0 0 12px;letter-spacing:-.01em;text-wrap:balance}
+.lede{font-size:17px;color:var(--ink-2);max-width:64ch;margin:0}
+section{margin-top:48px;scroll-margin-top:16px}
+.opt-head{display:grid;grid-template-columns:44px 1fr auto;gap:14px;align-items:start;margin-bottom:12px}
+.opt-key{font-family:var(--mono);font-size:13px;color:var(--accent);border:1px solid var(--accent);border-radius:4px;height:28px;width:44px;display:grid;place-items:center;margin-top:3px}
+h2{font-size:22px;font-weight:600;margin:0;line-height:1.25;text-wrap:balance}
+.goal{color:var(--ink-3);font-size:14px;margin:4px 0 0}
+.tags{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+.tag.rec{color:var(--ok);background:var(--ok-soft)}
+.tag.eff{color:var(--info);background:var(--info-soft)}
+.tag.skip{color:var(--ink-3);background:var(--code-bg)}
+.tag.warn{color:var(--accent);background:var(--accent-soft)}
+p{margin:0;max-width:68ch}
+ul{margin:0;padding-left:20px;max-width:68ch}
+li{margin:4px 0}
+code{font-family:var(--mono);font-size:.92em;background:var(--code-bg);padding:1px 5px;border-radius:4px}
+
+/* ---- mock islands ---- */
+.mocks{display:grid;grid-template-columns:1fr;gap:14px;margin:14px 0}
+.mock{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:12px}
+.mock h4{margin:0 0 8px;font-family:var(--mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:500;color:var(--ink-3)}
+.mock p.cap{font-size:13.5px;color:var(--ink-2);margin-top:8px;max-width:none}
+.island{
+  position:relative;background:#07080B;color:#E6E9EF;border-radius:14px;height:188px;overflow:hidden;
+  font-family:var(--sans);
+}
+.hdr{position:absolute;left:16px;right:16px;top:8px;height:24px;display:flex;align-items:center;gap:12px;font-size:11px;color:#9AA3B2}
+.hdr .ico{width:20px;height:20px;border-radius:7px;border:1px dashed #4B5567;display:grid;place-items:center;font-size:9px;color:#8A93A3;font-family:var(--mono)}
+.hdr .ico.on{border-style:solid;background:#1C212B;color:#E6E9EF}
+.hdr .spacer{flex:1}
+.card{position:absolute;top:40px;bottom:14px;left:16px;border-radius:14px;background:#101319;border:1px solid #1E2330}
+.card.main{right:calc(42% + 8px)}
+.card.main.wide{right:16px}
+.side{position:absolute;top:40px;bottom:14px;right:16px;width:42%;border-radius:14px;background:#101319;border:1px solid #1E2330;padding:12px;display:flex;flex-direction:column;gap:8px}
+.side.empty{border-style:dashed;border-color:#2A3140;background:transparent}
+.side.gone{display:none}
+.mochi{position:absolute;left:22px;top:50%;transform:translateY(-50%);width:66px;height:52px;border-radius:46% 46% 42% 42%/52% 52% 40% 40%;background:#F1F2F4;box-shadow:inset -6px -8px 14px rgba(120,140,190,.35)}
+.mochi::before,.mochi::after{content:"";position:absolute;background:#15181F;border-radius:50%;width:6px;height:6px;top:28px}
+.mochi::before{left:22px}.mochi::after{right:22px}
+.badge{position:absolute;left:-4px;top:-2px;width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:700;font-family:var(--mono)}
+.badge.work{background:#1F6FEB;color:#fff;letter-spacing:1px;font-size:8px}
+.badge.done{background:#3DD68C;color:#073}
+.badge.alert{background:#F5A524;color:#2A1A00}
+.body-txt{position:absolute;left:104px;right:14px;top:12px;display:flex;flex-direction:column;gap:5px}
+.who{display:flex;align-items:center;gap:7px;font-size:12px;color:#9AA3B2}
+.who b{color:#E6E9EF;font-weight:600}
+.who .dot{width:7px;height:7px;border-radius:50%;background:#F26B5B}
+.who .count{margin-left:auto;font-family:var(--mono);font-size:11px;color:#7F8A9B}
+.steps{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:#7F8A9B;font-family:var(--mono)}
+.steps .cur{color:#E6E9EF;font-size:12.5px}
+.steps span::before{content:"▢ ";opacity:.6}
+.steps .cur::before{content:"› "}
+.steps .tok{color:#C9A14A}
+.steps .tok::before{content:"Σ ";opacity:.8}
+.headline{font-size:14px;font-weight:600;color:#E6E9EF}
+.btns{display:flex;gap:6px;margin-top:2px}
+.btn{font-size:11.5px;padding:5px 11px;border-radius:999px;border:1px solid #2A3140;background:#1A1F2A;color:#E6E9EF}
+.btn.primary{background:#F1F2F4;color:#15181F;border-color:#F1F2F4}
+.callout-tag{position:absolute;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:#F5A524;background:rgba(245,165,36,.12);border:1px solid rgba(245,165,36,.4);border-radius:4px;padding:1px 6px}
+
+/* side-panel contents */
+.pills{display:flex;flex-wrap:wrap;gap:6px;align-content:flex-start}
+.pill{height:26px;padding:0 10px 0 7px;border-radius:999px;border:1px solid #3B4559;display:flex;align-items:center;gap:6px;font-size:11px;color:#C9D0DB;background:#161B25;white-space:nowrap}
+.pill i{width:12px;height:10px;border-radius:40%;background:#6F7A8E;display:block;flex:none}
+.pill.amber{border-color:#8A6A2A}.pill.amber i{background:#E0A030}
+.pill.green{border-color:#2F6A48}.pill.green i{background:#3DD68C}
+.pill.q{border-color:#8A6A2A}
+.pill .mini{font-family:var(--mono);font-size:9.5px;color:#8A93A3;margin-left:2px}
+.pill .qb{width:12px;height:12px;border-radius:50%;background:#F5A524;color:#2A1A00;font-size:8px;font-weight:700;display:grid;place-items:center;font-family:var(--mono)}
+.usage{display:flex;flex-direction:column;gap:7px}
+.usage .row{display:grid;grid-template-columns:52px 1fr 40px;gap:8px;align-items:center;font-size:10.5px;color:#9AA3B2}
+.usage .row b{font-family:var(--mono);font-weight:500;color:#C9D0DB;text-align:right}
+.bar{height:6px;border-radius:3px;background:#1E2330;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:3px;background:#5B8DEF}
+.bar.amber i{background:#F5A524}
+.bar.red i{background:#F26B5B}
+.bar.dim i{background:#3B4559}
+.usage .meta{font-family:var(--mono);font-size:9.5px;color:#7F8A9B;display:flex;justify-content:space-between}
+.usage .title{font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:#7F8A9B;display:flex;justify-content:space-between}
+.strip{margin-top:auto;border-top:1px solid #1E2330;padding-top:6px;display:flex;gap:10px;font-family:var(--mono);font-size:9.5px;color:#9AA3B2;align-items:center}
+.strip .mb{flex:1;height:4px;border-radius:2px;background:#1E2330;overflow:hidden}
+.strip .mb i{display:block;height:100%;background:#5B8DEF}
+.strip .mb.amber i{background:#F5A524}
+.empty-note{margin:auto;text-align:center;font-size:11px;color:#4B5567;font-family:var(--mono)}
+
+/* compare table */
+.tbl{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--panel);margin-top:14px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+tr:last-child td{border-bottom:none}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:500}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px}
+.note{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;font-size:14px}
+.note h5{margin:0 0 6px;font-family:var(--mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;font-weight:500;color:var(--ink-3)}
+.note p,.note ul{font-size:14px;color:var(--ink-2);max-width:none}
+.toc{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
+.toc a{font-family:var(--mono);font-size:12px;text-decoration:none;color:var(--ink-2);border:1px solid var(--rule);background:var(--panel);border-radius:999px;padding:4px 10px}
+.toc a:hover{color:var(--ink);border-color:var(--ink-3)}
+footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-3);max-width:70ch}
+@media (max-width:640px){.island{height:230px}.body-txt{left:92px}.side{width:46%}.card.main{right:calc(46% + 8px)}}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">Wireframes · right panel of the Coucou island</p>
+  <h1>Right Panel Options</h1>
+  <p class="lede">Five ways to use the empty slot on the right, each drawn in the states it would actually show. Pick any combination. Effort is from reading the code we already patched.</p>
+  <div class="toc">
+    <a href="#today">0 · today</a><a href="#hide">A · hide when empty</a><a href="#usage">B · usage card</a><a href="#tokens">C · worker tokens</a><a href="#combo">D · Claude + GLM usage, workers</a><a href="#board">E · Orca board</a><a href="#compare">compare</a>
+  </div>
+</header>
+
+<section id="today">
+  <div class="opt-head"><div class="opt-key">0</div><div><h2>Today</h2><p class="goal">The slot holds every pill except the main one. With service pills off and no worker running, it's an empty box.</p></div><div class="tags"><span class="tag skip">baseline</span></div></div>
+  <div class="mocks">
+    <div class="mock"><h4>Idle, nothing running</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>5/5</span></div>
+        <div class="card main"><div class="mochi"></div><div class="body-txt"><div class="who"><span class="dot"></span><b>Desktop</b><span>Claude Code</span><span class="count">5/5</span></div><div class="steps"><span>Exécute · cd ~/.claude/skills…</span><span class="cur">• subagent done</span></div></div></div>
+        <div class="side empty"><div class="empty-note">empty</div></div>
+      </div>
+      <p class="cap">What you saw in the screenshot. Upstream never designed for this because it always had four service pills here.</p>
+    </div>
+  </div>
+</section>
+
+<section id="hide">
+  <div class="opt-head"><div class="opt-key">A</div><div><h2>Hide the panel when it has nothing</h2><p class="goal">Main card takes the full width until a worker pill or another card appears, then the layout splits as today.</p></div><div class="tags"><span class="tag rec">recommended</span><span class="tag eff">small · app</span></div></div>
+  <div class="mocks">
+    <div class="mock"><h4>Idle</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>5/5</span></div>
+        <div class="card main wide"><div class="mochi"></div><div class="body-txt"><div class="who"><span class="dot"></span><b>Desktop</b><span>Claude Code</span><span class="count">5/5</span></div><div class="steps"><span>Read · HookServer.swift</span><span>Exécute · cd ~/.claude/skills…</span><span class="cur">• subagent done</span></div></div></div>
+      </div>
+      <p class="cap">Steps get the extra width, so long commands stop truncating at 30 characters. Nothing else changes.</p>
+    </div>
+    <div class="mock"><h4>A worker starts</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>2 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge work">•••</span></div><div class="body-txt"><div class="who"><span class="dot"></span><b>coucou-orca</b><span>Claude Code</span></div><div class="steps"><span>Bash · orca orchestration worker-start</span><span class="cur">Bash · orca orchestration check --wait</span></div></div></div>
+        <div class="side"><div class="pills"><span class="pill amber"><i></i>pi-02-claude-code-chat</span></div></div>
+      </div>
+      <p class="cap">Same as today's behaviour once anything is there. Only the empty case changes.</p>
+    </div>
+  </div>
+</section>
+
+<section id="usage">
+  <div class="opt-head"><div class="opt-key">B</div><div><h2>Usage card</h2><p class="goal">Context used by the focused Claude session, the 5-hour and 7-day rate limits with reset times, and session cost. The "token limit" view.</p></div><div class="tags"><span class="tag rec">recommended</span><span class="tag eff">medium · app + relay</span></div></div>
+  <div class="mocks">
+    <div class="mock"><h4>Session active, limits healthy</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>1 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge work">•••</span></div><div class="body-txt"><div class="who"><span class="dot"></span><b>dep-platform</b><span>Claude Code</span></div><div class="steps"><span>Read · schema.prisma</span><span class="cur">Bash · npx prisma validate</span></div></div></div>
+        <div class="side"><div class="usage">
+          <div class="title"><span>usage · dep-platform</span><span>opus</span></div>
+          <div class="row"><span>context</span><div class="bar"><i style="width:42%"></i></div><b>42%</b></div>
+          <div class="row"><span>5 hour</span><div class="bar"><i style="width:61%"></i></div><b>61%</b></div>
+          <div class="row"><span>7 day</span><div class="bar"><i style="width:23%"></i></div><b>23%</b></div>
+          <div class="meta"><span>resets 20:40 · Mon 09:00</span><span>$1.84 today</span></div>
+        </div></div>
+      </div>
+      <p class="cap">Context follows whichever session is focused. The two limits are account-wide, so they're the same in every session. Reset times are local clock.</p>
+    </div>
+    <div class="mock"><h4>Approaching the 5-hour limit</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>1 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge alert">!</span></div><div class="body-txt"><div class="who"><span class="dot"></span><b>dep-platform</b><span>Claude Code</span></div><div class="steps"><span>Edit · migration.sql</span><span class="cur">Bash · npm test</span></div></div></div>
+        <div class="side"><div class="usage">
+          <div class="title"><span>usage · dep-platform</span><span>opus</span></div>
+          <div class="row"><span>context</span><div class="bar amber"><i style="width:78%"></i></div><b>78%</b></div>
+          <div class="row"><span>5 hour</span><div class="bar red"><i style="width:92%"></i></div><b>92%</b></div>
+          <div class="row"><span>7 day</span><div class="bar"><i style="width:31%"></i></div><b>31%</b></div>
+          <div class="meta"><span>resets in 48 min</span><span>$3.10 today</span></div>
+        </div></div>
+        <span class="callout-tag" style="right:22px;bottom:18px">amber ≥ 75 · red ≥ 90</span>
+      </div>
+      <p class="cap">Bars recolour at thresholds and Mochi gets the alert badge once, so you notice before Claude Code stops mid-task. Context at 78 percent is the moment to think about compacting.</p>
+    </div>
+    <div class="mock"><h4>No session yet, or before the first response</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>0 running</span></div>
+        <div class="card main"><div class="mochi"></div><div class="body-txt"><div class="who"><span class="dot" style="background:#F1F2F4"></span><b>Orca</b><span>Claude Code host</span></div><div class="steps"><span style="color:#22C55E">● Hooks installed</span></div><div class="btns"><span class="btn">Open Orca</span></div></div></div>
+        <div class="side"><div class="usage">
+          <div class="title"><span>usage</span><span>as of 18:52</span></div>
+          <div class="row"><span>context</span><div class="bar dim"><i style="width:0%"></i></div><b>—</b></div>
+          <div class="row"><span>5 hour</span><div class="bar dim"><i style="width:61%"></i></div><b>61%</b></div>
+          <div class="row"><span>7 day</span><div class="bar dim"><i style="width:23%"></i></div><b>23%</b></div>
+          <div class="meta"><span>last values kept</span><span></span></div>
+        </div></div>
+      </div>
+      <p class="cap">Limits come only after a session's first reply, so the card keeps the last known values greyed with their timestamp rather than going blank.</p>
+    </div>
+  </div>
+  <div class="notes">
+    <div class="note"><h5>Data source</h5><p>Claude Code's status-line JSON, sent to a script on every update. It carries context used %, cost, and for Pro and Max logins the 5-hour and 7-day <code>used_percentage</code> and <code>resets_at</code>.</p></div>
+    <div class="note"><h5>How it gets in</h5><p>Coucou installs a status-line relay the way it installs hooks, with a diff you confirm: a wrapper that forwards the JSON to Coucou's socket and then runs Orca's existing status-line script unchanged. Orca's status bar keeps working.</p></div>
+    <div class="note"><h5>Caveats</h5><p>Rate-limit fields exist only for claude.ai Pro and Max. On an API-key login the card shows context and cost only. Cost is the session's own figure, not a billing total.</p></div>
+  </div>
+</section>
+
+<section id="tokens">
+  <div class="opt-head"><div class="opt-key">C</div><div><h2>Token totals on worker pills</h2><p class="goal">When a pi worker finishes, its pill records what it cost in tokens. Extension only, no app change.</p></div><div class="tags"><span class="tag rec">recommended</span><span class="tag eff">small · extension</span></div></div>
+  <div class="mocks">
+    <div class="mock"><h4>Worker focused, just finished</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>1 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge done">✓</span></div><div class="body-txt"><div class="who"><span class="dot" style="background:#E0A030"></span><b>pi-02-claude-code-chat</b><span>Agent</span></div><div class="steps"><span>report written · 02-claude-code-chat-report.md</span><span class="tok">tokens · 61k in · 49k out · 1.8M cache · 36 turns</span><span class="cur">worker_done · succeeded</span></div><div class="btns"><span class="btn primary">Open terminal</span><span class="btn">OK</span></div></div></div>
+        <div class="side"><div class="pills"><span class="pill"><i style="background:#F1F2F4"></i>Orca</span></div></div>
+      </div>
+      <p class="cap">One extra step line, in the worker's own card, right before the finished card. Visible for the five seconds the pill lingers and in the overview's step list while it's there.</p>
+    </div>
+    <div class="mock"><h4>Running, periodic</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>2 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge work">•••</span></div><div class="body-txt"><div class="who"><span class="dot" style="background:#E0A030"></span><b>pi-07-auth-hooks</b><span>Agent</span></div><div class="steps"><span>phase · implementing</span><span class="tok">tokens so far · 22k out · 0.6M cache</span><span class="cur">Edit · hooks.ts</span></div></div></div>
+        <div class="side"><div class="pills"><span class="pill"><i style="background:#F1F2F4"></i>Orca</span><span class="pill amber"><i></i>pi-08-chat <span class="mini">14k out</span></span></div></div>
+      </div>
+      <p class="cap">Optional variant: a running total every heartbeat, and a tiny count on the pill itself. Noisier. The finished-only version is the one I'd ship first.</p>
+    </div>
+  </div>
+  <div class="notes">
+    <div class="note"><h5>Data source</h5><p>pi hands the extension every assistant message with its <code>usage</code> block. Summing input, output and cache-read per run is ten lines.</p></div>
+    <div class="note"><h5>What it tells you</h5><p>Which briefs are expensive. Per-turn cache read is the real cost driver for glm workers, so the 1.8M figure is the one to watch between briefs.</p></div>
+    <div class="note"><h5>Not included</h5><p>Z.ai plan quota. Their coding plan has no usage endpoint the extension can read, so this stays per-run tokens, not a limit bar.</p></div>
+  </div>
+</section>
+
+<section id="combo">
+  <div class="opt-head"><div class="opt-key">D</div><div><h2>Usage for Claude and GLM, with worker pills</h2><p class="goal">Your pick, extended: both subscriptions in one card. Workers take the space when they run; usage folds into a strip.</p></div><div class="tags"><span class="tag rec">chosen</span><span class="tag eff">medium · app + relay + poller</span></div></div>
+  <div class="mocks">
+    <div class="mock"><h4>Idle: both providers, full card</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>1 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge work">•••</span></div><div class="body-txt"><div class="who"><span class="dot"></span><b>dep-platform</b><span>Claude Code</span><span class="count">ctx 42%</span></div><div class="steps"><span>Read · schema.prisma</span><span class="cur">Bash · npx prisma validate</span></div></div></div>
+        <div class="side"><div class="usage">
+          <div class="title"><span>claude · max</span><span>resets 20:40 · Mon</span></div>
+          <div class="row"><span>5 hour</span><div class="bar"><i style="width:61%"></i></div><b>61%</b></div>
+          <div class="row"><span>7 day</span><div class="bar"><i style="width:23%"></i></div><b>23%</b></div>
+          <div class="title" style="margin-top:3px"><span>glm · z.ai max</span><span>resets 21:05 · Oct 5</span></div>
+          <div class="row"><span>5 hour</span><div class="bar"><i style="width:3%;background:#E0A030"></i></div><b>3%</b></div>
+          <div class="row"><span>weekly</span><div class="bar"><i style="width:18%;background:#E0A030"></i></div><b>18%</b></div>
+        </div></div>
+      </div>
+      <p class="cap">Two groups, two bars each. Context moved to the main card header as "ctx 42%", since it belongs to the session, not the account. Claude bars blue, GLM bars amber, matching the Claude Code and pi pill colours. Numbers here are today's real Z.ai values.</p>
+    </div>
+    <div class="mock"><h4>Two workers running: usage folds to a strip</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>3 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge work">•••</span></div><div class="body-txt"><div class="who"><span class="dot"></span><b>coucou-orca</b><span>Claude Code</span><span class="count">ctx 55%</span></div><div class="steps"><span>Bash · orca orchestration check --wait</span><span class="cur">Read · 07-auth-hooks-report.md</span></div></div></div>
+        <div class="side">
+          <div class="pills"><span class="pill amber"><i></i>pi-07-auth-hooks</span><span class="pill amber q"><i></i>pi-08-chat <span class="qb">?</span></span></div>
+          <div class="strip"><span style="color:#5B8DEF">C</span><div class="mb"><i style="width:61%"></i></div><span>61 · 23</span><span style="color:#E0A030;margin-left:6px">G</span><div class="mb amber"><i style="width:18%"></i></div><span>3 · 18</span></div>
+        </div>
+      </div>
+      <p class="cap">One line: C for Claude with 5-hour then 7-day, G for GLM with 5-hour then weekly. The bar shows whichever window is higher. Hover the strip to see the full card as a tooltip.</p>
+    </div>
+    <div class="mock"><h4>GLM near its 5-hour limit while a worker runs</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>2 running</span></div>
+        <div class="card main"><div class="mochi"><span class="badge alert">!</span></div><div class="body-txt"><div class="who"><span class="dot" style="background:#E0A030"></span><b>pi-07-auth-hooks</b><span>Agent</span></div><div class="steps"><span>phase · testing</span><span class="cur">Bash · npm test</span></div></div></div>
+        <div class="side">
+          <div class="pills"><span class="pill"><i style="background:#F1F2F4"></i>Orca</span></div>
+          <div class="strip"><span style="color:#5B8DEF">C</span><div class="mb"><i style="width:40%"></i></div><span>40 · 24</span><span style="color:#F26B5B;margin-left:6px">G</span><div class="mb" style="background:#1E2330"><i style="width:91%;background:#F26B5B"></i></div><span style="color:#F26B5B">91 · 44</span></div>
+        </div>
+        <span class="callout-tag" style="left:30px;bottom:18px">a capped glm worker stops mid-task</span>
+      </div>
+      <p class="cap">This is the case that pays for the feature: the coordinator skill tells you to check GLM headroom before dispatching a long slice. Red at 90 and Mochi's alert badge make it visible without opening the Z.ai dashboard.</p>
+    </div>
+  </div>
+  <div class="notes">
+    <div class="note"><h5>Claude numbers</h5><p>From Claude Code's status-line JSON. Coucou installs a relay that forwards the JSON to its socket, then hands it to Orca's existing status-line script unchanged, so Orca's own status bar keeps working. You confirm the settings diff, as with hooks. Pro and Max logins only for the limits; context and cost always.</p></div>
+    <div class="note"><h5>GLM numbers</h5><p>Polled every minute from Z.ai's quota endpoint with your coding-plan key: 5-hour and weekly percentage, remaining, reset time and plan level. Verified today with the key pi already uses. Zero tokens consumed. Settings gets a "Z.ai (GLM)" box with an "Import from pi" button so you never paste the key.</p></div>
+    <div class="note"><h5>Caveats</h5><ul><li>Orca manages the status-line entry and may rewrite it on its updates. Coucou's Settings will show the relay as missing if that happens, with a one-click reinstall.</li><li>Claude limits appear only after a session's first reply. Until then the card keeps the last known values greyed with a timestamp.</li><li>The Z.ai endpoint is what their dashboard uses, not a documented API. If it changes, the GLM group shows "unavailable" and nothing else breaks.</li></ul></div>
+  </div>
+</section>
+
+<section id="board">
+  <div class="opt-head"><div class="opt-key">E</div><div><h2>Orca orchestration board</h2><p class="goal">Coordinator-side view: every task in the current run with its state, polled from the Orca CLI.</p></div><div class="tags"><span class="tag skip">not recommended</span><span class="tag eff">medium · app, needs a handle</span></div></div>
+  <div class="mocks">
+    <div class="mock"><h4>A run with three tasks</h4>
+      <div class="island">
+        <div class="hdr"><span class="ico on">⌂</span><span class="ico">💬</span><span class="ico">+</span><span class="spacer"></span><span>run_479af4</span></div>
+        <div class="card main"><div class="mochi"><span class="badge work">•••</span></div><div class="body-txt"><div class="who"><span class="dot"></span><b>coucou-orca</b><span>Claude Code</span></div><div class="steps"><span class="cur">Bash · orca orchestration check --wait</span></div></div></div>
+        <div class="side"><div class="pills">
+          <span class="pill green"><i></i>01 tooling <span class="mini">done 10m</span></span>
+          <span class="pill amber"><i></i>02 chat <span class="mini">implementing</span></span>
+          <span class="pill q"><i style="background:#6F7A8E"></i>03 usage <span class="mini">PLAN</span><span class="qb">?</span></span>
+        </div></div>
+      </div>
+      <p class="cap">Looks useful, but the information already arrives from inside each worker through the pi extension, and the only new thing, the PLAN question, is answered by Claude in seconds anyway.</p>
+    </div>
+  </div>
+  <div class="notes">
+    <div class="note"><h5>Why not</h5><ul><li>Task titles, states and gates need a bound coordinator terminal handle. A menu-bar app would have to own an Orca terminal for life.</li><li>Run and dispatch lists without a handle give IDs only, as checked today.</li><li>It duplicates option C's pills with a lag.</li></ul></div>
+    <div class="note"><h5>If you still want it</h5><p>Cheapest honest version: tag each pi pill with its Orca task id, parsed from the preamble Orca pastes into the worker. Zero polling, five lines in the extension.</p></div>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="opt-head"><div class="opt-key">≡</div><div><h2>Compare</h2><p class="goal">Effort is for this fork, with the build and dispatch loop we already have.</p></div><div class="tags"></div></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Option</th><th>What you gain</th><th>Where the work is</th><th>Effort</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td><b>A</b> hide when empty</td><td>No empty box, wider steps</td><td>App layout, one view</td><td>Small, I do it</td><td>Yes</td></tr>
+      <tr><td><b>B</b> usage card</td><td>Context, 5-hour, 7-day, cost at a glance, with warnings</td><td>App: relay installer, new event, new card. Script: wrapper around Orca's status line</td><td>Medium, worker brief</td><td>Yes, the one with new information</td></tr>
+      <tr><td><b>C</b> worker tokens</td><td>Cost per brief</td><td>pi extension only</td><td>Small, I do it</td><td>Yes</td></tr>
+      <tr><td><b>D</b> Claude + GLM usage with workers</td><td>Both subscriptions' limits at a glance, warnings before a capped worker stalls</td><td>App: relay installer, Z.ai poller, usage card and strip. Script: relay. Includes A and C</td><td>Medium, worker brief</td><td>Chosen</td></tr>
+      <tr><td><b>E</b> Orca board</td><td>Coordinator view of tasks</td><td>App poller plus a permanent Orca terminal</td><td>Medium</td><td>Skip. Tag pills with the task id instead</td></tr>
+    </tbody>
+  </table></div>
+  <p style="margin-top:14px">Decision: D, which contains A and C. A and C are done directly; the card, the relay and the Z.ai poller go to a worker brief, with one settings confirmation on your side for the relay.</p>
+</section>
+
+<footer>Mock proportions follow the real island: 160 pt tall expanded panel, main card left, 42 percent side panel right. Numbers in the mocks are illustrative. Data sources were checked on this Mac on 2026-10-02.</footer>
+</div>
