@@ -15,10 +15,18 @@ index 4f0b78b..c66e6ed 100644
  	<true/>
  	<key>NSSupportsAutomaticGraphicsSwitching</key>
 diff --git a/NotchBuddy/Sources/App/AppDelegate.swift b/NotchBuddy/Sources/App/AppDelegate.swift
-index f94af2b..317034a 100644
+index f94af2b..1dfdd44 100644
 --- a/NotchBuddy/Sources/App/AppDelegate.swift
 +++ b/NotchBuddy/Sources/App/AppDelegate.swift
-@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+         // Warm up Keychain cache on main thread BEFORE any poller or view touches it
+         _ = KeychainStore.shared
+         NSApp.setActivationPolicy(.accessory)
++        FileDropHandler.cleanInbox()
+         setupMenuBarItem()
+         setupIsland()
+     }
+@@ -96,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          StripePoller.shared.start()
          CalcomPoller.shared.start()
          NotionPoller.shared.start()
@@ -474,6 +482,28 @@ index 5144fc4..5a996c8 100644
      private func showError(_ message: String, state: AppState) async {
          state.stateOverride = .error
          state.noteMessage = message
+diff --git a/NotchBuddy/Sources/App/FileDropView.swift b/NotchBuddy/Sources/App/FileDropView.swift
+index 9a47a33..9d08e06 100644
+--- a/NotchBuddy/Sources/App/FileDropView.swift
++++ b/NotchBuddy/Sources/App/FileDropView.swift
+@@ -43,6 +43,17 @@ final class FileDropNSView: NSView {
+ // MARK: - File drop handler
+ 
+ enum FileDropHandler {
++    /// Dropped files are copied into <support>/inbox for the chat to read. Nothing needs them
++    /// after the app quits, so each launch starts with an empty inbox.
++    static func cleanInbox() {
++        let inbox = HookServer.supportDir.appendingPathComponent("inbox")
++        let fm = FileManager.default
++        guard let items = try? fm.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil) else { return }
++        var removed = 0
++        for item in items where (try? fm.removeItem(at: item)) != nil { removed += 1 }
++        if removed > 0 { appendAppLog("nb.log", "Inbox cleaned: \(removed) file\(removed == 1 ? "" : "s") removed") }
++    }
++
+     @MainActor
+     static func handle(urls: [URL], state: AppState) async {
+         guard let url = urls.first else { return }
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
 index 41b71c0..6dbb654 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
