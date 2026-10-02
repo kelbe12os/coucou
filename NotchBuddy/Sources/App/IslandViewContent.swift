@@ -37,6 +37,11 @@ struct OverviewView: View {
 
     var agent: AgentTask? { state.focusTask }
 
+    /// Other agent pills that share the right panel with the usage card.
+    var others: [AgentTask] { state.tasks.filter { $0.id != state.focusId } }
+    var showUsage: Bool { state.usageConfigured }
+    var panelHidden: Bool { others.isEmpty && !showUsage }
+
     var body: some View {
         HStack(spacing: 10) {
             // Left card: title row + ticker below + ↗ button overlay
@@ -71,6 +76,12 @@ struct OverviewView: View {
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Spacer(minLength: 2)
+                                if agent.id == "integration_claude", let ctx = state.claudeUsage.contextPct {
+                                    Text("ctx \(ctx)%")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(ctx >= 90 ? Color(hex: "#F26B5B") : (ctx >= 75 ? Color(hex: "#F5A524") : Color(hex: "#6B7079")))
+                                        .fixedSize()
+                                }
                                 if agent.steps.count > 1 {
                                     Text("\(min(agent.stepIndex + 1, agent.steps.count))/\(agent.steps.count)")
                                         .font(.system(size: 11))
@@ -109,11 +120,24 @@ struct OverviewView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            .frame(width: 322)
+            .frame(width: panelHidden ? nil : 322)
 
-            // Right card: agent pills
-            CardBackground(wash: nil) {
-                AgentPillsView(state: state)
+            // Right card: agent pills and/or usage
+            if !others.isEmpty || showUsage {
+                CardBackground(wash: nil) {
+                    VStack(spacing: 0) {
+                        if !others.isEmpty { AgentPillsView(state: state) }
+                        if showUsage {
+                            if others.isEmpty {
+                                UsageCardView(state: state)
+                            } else {
+                                UsageStripView(state: state)
+                                    .padding(.horizontal, 10)
+                                    .padding(.bottom, 8)
+                            }
+                        }
+                    }
+                }
             }
         }
         .onChange(of: state.focusId) { _, _ in showingN8nDetail = false }
@@ -2544,9 +2568,9 @@ struct AgentPill: View {
     let onTap: () -> Void
     @State private var isHovered = false
 
-    // VS Code pill always shows "VS Code" label regardless of active project name
+    // integration_claude pill shows its catalog name regardless of active project name
     private var displayName: String {
-        task.id == "integration_claude" ? "VS Code" : task.name
+        task.id == "integration_claude" ? (PillCatalog.definition(for: task.id)?.name ?? task.name) : task.name
     }
 
     var body: some View {

@@ -218,6 +218,49 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Usage (Claude Code rate limits via status-line relay; Z.ai GLM quota via poller)
+
+    struct ClaudeUsage: Codable, Equatable {
+        var fiveHourPct: Int? = nil
+        var fiveHourResetsAt: Date? = nil
+        var sevenDayPct: Int? = nil
+        var sevenDayResetsAt: Date? = nil
+        var contextPct: Int? = nil        // for the most recently reporting session
+        var contextSessionId: String? = nil
+        var costUSD: Double? = nil
+        var model: String? = nil
+        var updatedAt: Date? = nil
+        var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 600 } ?? true }
+    }
+
+    struct ZaiUsage: Equatable {
+        var fiveHourPct: Int? = nil
+        var fiveHourResetsAt: Date? = nil
+        var weeklyPct: Int? = nil
+        var weeklyResetsAt: Date? = nil
+        var level: String? = nil
+        var updatedAt: Date? = nil
+        var error: String? = nil
+        var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 600 } ?? true }
+    }
+
+    @Published var claudeUsage: ClaudeUsage = ClaudeUsage() {
+        didSet {
+            if let data = try? JSONEncoder().encode(claudeUsage) {
+                UserDefaults.standard.set(data, forKey: "claudeUsage")
+            }
+        }
+    }
+    @Published var zaiUsage: ZaiUsage = ZaiUsage()
+
+    /// True when the right panel should carry the usage card or strip.
+    var usageConfigured: Bool {
+        HookServer.statusLineRelayInstalled()
+            || !(KeychainStore.shared.get("zai-api-key") ?? "").isEmpty
+            || claudeUsage.updatedAt != nil
+            || zaiUsage.updatedAt != nil
+    }
+
     // Pending API result
     @Published var searchResult: SearchResult? = nil
 
@@ -268,6 +311,8 @@ final class AppState: ObservableObject {
         if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
         if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
         if let v = ud.string(forKey: "claudeCodeModel"), !v.isEmpty { claudeCodeModel = v }
+        if let d = ud.data(forKey: "claudeUsage"),
+           let u = try? JSONDecoder().decode(ClaudeUsage.self, from: d) { claudeUsage = u }
         // Migrate old 60s default → 15s
         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
             autoCloseInterval = (v == 60) ? 15 : v

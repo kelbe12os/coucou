@@ -34,6 +34,48 @@ struct SettingsView: View {
     @State private var pendingHookJSON: String = ""
     @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
     @State private var claudeHooksInstalled: Bool = HookServer.claudeHooksInstalled()
+    @State private var relayInstalled: Bool = HookServer.statusLineRelayInstalled()
+    @State private var zaiKey: String = KeychainStore.shared.get("zai-api-key") ?? ""
+
+    private func confirmRelayInstall() {
+        let alert = NSAlert()
+        alert.messageText = "Install the status-line relay?"
+        let current = HookServer.currentStatusLineCommand()
+        alert.informativeText = "settings.statusLine.command becomes:\n/bin/sh \"\(HookServer.statusLineRelayPath)\"\n\n"
+            + (current.map { $0.contains("nb-statusline") ? "The relay is already installed; it will be refreshed." : "The current command is saved to statusline-upstream.sh and still runs after the relay." }
+               ?? "No status line is configured today; only the relay will run.")
+            + "\n\nA backup of ~/.claude/settings.json is written first."
+        alert.addButton(withTitle: "Install"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do { try HookServer.shared.installStatusLineRelay(); relayInstalled = true; statusMessage = "✓ Relay installed. Values appear after the next Claude Code reply." }
+        catch { statusMessage = "❌ \(error.localizedDescription)" }
+    }
+
+    private func confirmRelayRemove() {
+        let alert = NSAlert()
+        alert.messageText = "Remove the status-line relay?"
+        alert.informativeText = "The previous status-line command is restored from statusline-upstream.sh."
+        alert.addButton(withTitle: "Remove"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do { try HookServer.shared.uninstallStatusLineRelay(); relayInstalled = false; statusMessage = "✓ Relay removed." }
+        catch { statusMessage = "❌ \(error.localizedDescription)" }
+    }
+
+    private func importZaiKeyFromPi() {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent/models.json")
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let providers = json["providers"] as? [String: Any],
+              let zai = providers["zai"] as? [String: Any],
+              let key = zai["apiKey"] as? String, !key.isEmpty, !key.hasPrefix("env:") else {
+            statusMessage = "❌ No Z.ai key found in ~/.pi/agent/models.json (providers.zai.apiKey)."
+            return
+        }
+        zaiKey = key
+        KeychainStore.shared.set("zai-api-key", value: key)
+        ZaiPoller.shared.pollNow()
+        statusMessage = "✓ Z.ai key imported from pi."
+    }
 
     #if !APPSTORE
     @State private var geminiHooksInstalled: Bool = HookServer.geminiHooksInstalled()
@@ -270,6 +312,54 @@ struct SettingsView: View {
 
                 // MARK: Gemini CLI Hooks / Antigravity Hooks
                 #if !APPSTORE
+                GroupBox("Usage card") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Shows Claude Code's 5-hour and 7-day limits and the Z.ai GLM quota in the island's right panel.")
+                            .font(.system(size: 12)).foregroundColor(.secondary)
+
+                        // Claude: status-line relay
+                        HStack(spacing: 6) {
+                            Circle().fill(relayInstalled ? Color(hex: "#22C55E") : Color(hex: "#F4505E")).frame(width: 8, height: 8)
+                            Text(relayInstalled
+                                 ? "Status-line relay installed — Claude Code reports limits to the notch"
+                                 : "Status-line relay not installed — Claude limits unavailable")
+                                .font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                        HStack(spacing: 10) {
+                            Button(relayInstalled ? "Reinstall relay" : "Install relay") { confirmRelayInstall() }
+                                .buttonStyle(.borderedProminent)
+                            Button("Remove relay") { confirmRelayRemove() }
+                                .buttonStyle(.bordered).disabled(!relayInstalled)
+                        }
+                        Text("Wraps the current status line (Orca's) and keeps running it. Backs up settings.json first.")
+                            .font(.system(size: 10.5)).foregroundColor(.secondary)
+
+                        Divider()
+
+                        // GLM: Z.ai key
+                        HStack(spacing: 8) {
+                            Circle().fill(Color(hex: "#E0A030")).frame(width: 8, height: 8)
+                            Text("Z.ai GLM coding plan").font(.system(size: 12, weight: .semibold))
+                        }
+                        SecureField("Z.ai API key", text: $zaiKey).textFieldStyle(.roundedBorder)
+                        HStack(spacing: 10) {
+                            Button("Save") {
+                                KeychainStore.shared.set("zai-api-key", value: zaiKey)
+                                ZaiPoller.shared.pollNow()
+                                statusMessage = "✓ Z.ai key saved."
+                            }.buttonStyle(.borderedProminent)
+                            Button("Import from pi") { importZaiKeyFromPi() }
+                        }
+                        if let e = state.zaiUsage.error {
+                            Text(e).font(.system(size: 11)).foregroundColor(.red)
+                        } else if let t = state.zaiUsage.updatedAt {
+                            Text("Last poll \(t.formatted(date: .omitted, time: .shortened)) · plan \(state.zaiUsage.level ?? "?") · 5h \(state.zaiUsage.fiveHourPct ?? 0)% · week \(state.zaiUsage.weeklyPct ?? 0)%")
+                                .font(.system(size: 11)).foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(6)
+                }
+
                 GroupBox("Gemini CLI Hooks") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(geminiHooksInstalled

@@ -158,6 +158,34 @@ final class HookServer: @unchecked Sendable {
     // View switches only happen if VS Code (or the agent pill) is currently focused.
     // When not focused: state updates animate the mini bot in the pill; badge shown for alerts.
 
+    // MARK: - Status line (Claude Code usage)
+
+    @MainActor
+    private func processStatusLine(_ payload: [String: Any]) {
+        let state = AppState.shared
+        var u = state.claudeUsage
+        func int(_ k: String) -> Int? { (payload[k] as? NSNumber)?.intValue }
+        func date(_ k: String) -> Date? { (payload[k] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) } }
+        if let v = int("five_hour_pct")     { u.fiveHourPct = v }
+        if let d = date("five_hour_resets_at") { u.fiveHourResetsAt = d }
+        if let v = int("seven_day_pct")     { u.sevenDayPct = v }
+        if let d = date("seven_day_resets_at") { u.sevenDayResetsAt = d }
+        if let v = int("context_pct")       { u.contextPct = v; u.contextSessionId = payload["session_id"] as? String }
+        if let c = payload["cost_usd"] as? NSNumber { u.costUSD = c.doubleValue }
+        if let m = payload["model"] as? String, !m.isEmpty { u.model = m }
+        u.updatedAt = Date()
+        let crossed = Self.crossedAlert(old: state.claudeUsage, new: u)
+        state.claudeUsage = u
+        nbLog("StatusLine ctx=\(u.contextPct.map(String.init) ?? "-") 5h=\(u.fiveHourPct.map(String.init) ?? "-") 7d=\(u.sevenDayPct.map(String.init) ?? "-")")
+        if crossed { SoundEngine.shared.play("rate") }
+    }
+
+    /// True when either Claude window moved from below 90 % to 90 % or more.
+    private static func crossedAlert(old: AppState.ClaudeUsage, new: AppState.ClaudeUsage) -> Bool {
+        func up(_ a: Int?, _ b: Int?) -> Bool { (a ?? 0) < 90 && (b ?? 0) >= 90 }
+        return up(old.fiveHourPct, new.fiveHourPct) || up(old.sevenDayPct, new.sevenDayPct)
+    }
+
     @MainActor
     private func processEvent(name: String, payload: [String: Any]) {
         let state = AppState.shared
@@ -177,6 +205,8 @@ final class HookServer: @unchecked Sendable {
         let termProgram = payload["term_program"] as? String ?? ""
         let bundleId    = payload["bundle_id"]    as? String ?? ""
         let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
+        if name == "StatusLine" { processStatusLine(payload); return }
+
         // External agents bypass the terminal filter (their relay runs in any terminal).
         guard isExternalAgent || isVSCode else {
             nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
@@ -571,6 +601,14 @@ final class HookServer: @unchecked Sendable {
         let pyURL = wrapperURL.deletingLastPathComponent().appendingPathComponent("nb-hook.py")
         try? nbHookPythonGitHub.write(to: pyURL, atomically: true, encoding: .utf8)
         _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: pyURL.path)
+        // nb-statusline: shell wrapper (forwards the JSON to Coucou, then runs the previous status line)
+        let slURL = URL(fileURLWithPath: Self.statusLineRelayPath)
+        try? nbStatusLineShell.write(to: slURL, atomically: true, encoding: .utf8)
+        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: slURL.path)
+        // nb-statusline.py: Python relay
+        let slPyURL = slURL.deletingLastPathComponent().appendingPathComponent("nb-statusline.py")
+        try? nbStatusLinePython.write(to: slPyURL, atomically: true, encoding: .utf8)
+        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: slPyURL.path)
         #endif
     }
 
@@ -703,6 +741,81 @@ final class HookServer: @unchecked Sendable {
         settings["hooks"] = hooks
         let newData = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
         try newData.write(to: settingsURL, options: .atomic)
+    }
+
+    // MARK: - Status-line relay installer (Claude Code settings.statusLine)
+
+    static var statusLineRelayPath: String { supportDir.appendingPathComponent("nb-statusline").path }
+    static var statusLineUpstreamPath: String { supportDir.appendingPathComponent("statusline-upstream.sh").path }
+
+    private static var claudeSettingsURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
+    }
+
+    /// True when settings.statusLine.command points at Coucou's relay.
+    static func statusLineRelayInstalled() -> Bool {
+        guard let data = try? Data(contentsOf: claudeSettingsURL),
+              let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sl = s["statusLine"] as? [String: Any],
+              let cmd = sl["command"] as? String else { return false }
+        return cmd.contains("nb-statusline")
+    }
+
+    /// The command currently configured, if any (shown in Settings before installing).
+    static func currentStatusLineCommand() -> String? {
+        guard let data = try? Data(contentsOf: claudeSettingsURL),
+              let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sl = s["statusLine"] as? [String: Any] else { return nil }
+        return sl["command"] as? String
+    }
+
+    /// Installs the relay: saves the previous command (if not already ours) to statusline-upstream.sh,
+    /// backs up settings.json, and points settings.statusLine.command at nb-statusline.
+    func installStatusLineRelay() throws {
+        let url = Self.claudeSettingsURL
+        var settings: [String: Any] = [:]
+        if let data = try? Data(contentsOf: url),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { settings = parsed }
+        var sl = settings["statusLine"] as? [String: Any] ?? [:]
+        if let prev = sl["command"] as? String, !prev.isEmpty, !prev.contains("nb-statusline") {
+            let body = "#!/bin/sh\n" + prev + "\n"
+            try body.write(toFile: Self.statusLineUpstreamPath, atomically: true, encoding: .utf8)
+            _ = try? FileManager.default.setAttributes([.posixPermissions: 0o700 as NSNumber], ofItemAtPath: Self.statusLineUpstreamPath)
+        }
+        sl["type"] = "command"
+        sl["command"] = "/bin/sh \"\(Self.statusLineRelayPath.replacingOccurrences(of: "\"", with: "\\\""))\""
+        settings["statusLine"] = sl
+        try Self.writeClaudeSettings(settings, backupFirst: true)
+    }
+
+    /// Removes the relay: restores the saved upstream command, or deletes statusLine if there was none.
+    func uninstallStatusLineRelay() throws {
+        let url = Self.claudeSettingsURL
+        guard let data = try? Data(contentsOf: url),
+              var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        guard var sl = settings["statusLine"] as? [String: Any],
+              (sl["command"] as? String)?.contains("nb-statusline") == true else { return }
+        if let saved = try? String(contentsOfFile: Self.statusLineUpstreamPath, encoding: .utf8) {
+            let lines = saved.split(separator: "\n", omittingEmptySubsequences: false)
+            let cmd = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .newlines)
+            if !cmd.isEmpty { sl["command"] = cmd; settings["statusLine"] = sl }
+            else { settings.removeValue(forKey: "statusLine") }
+        } else {
+            settings.removeValue(forKey: "statusLine")
+        }
+        try Self.writeClaudeSettings(settings, backupFirst: true)
+    }
+
+    private static func writeClaudeSettings(_ settings: [String: Any], backupFirst: Bool) throws {
+        let url = claudeSettingsURL
+        if backupFirst, FileManager.default.fileExists(atPath: url.path) {
+            let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
+            let backup = url.deletingLastPathComponent().appendingPathComponent("settings.json.bak-\(f.string(from: Date()))")
+            try? FileManager.default.copyItem(at: url, to: backup)
+        }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url, options: .atomic)
     }
 
     // MARK: - App Store: hooks via security-scoped bookmark
@@ -1417,4 +1530,84 @@ def main():
 
 main()
 sys.exit(0)
+"""
+
+// nb-statusline — Claude Code status-line relay. Forwards the JSON to Coucou in the background,
+// then hands it to the previous status-line command (saved at install time) so its output still shows.
+private let nbStatusLineShell = """
+#!/bin/sh
+# Coucou status-line relay — forwards Claude Code's status JSON to Coucou, then runs the previous status line
+DIR="$(cd "$(dirname "$0")" && pwd)"
+payload=$(cat)
+[ -z "$payload" ] && exit 0
+if xcode-select -p >/dev/null 2>&1; then
+    printf '%s' "$payload" | /usr/bin/python3 "$DIR/nb-statusline.py" >/dev/null 2>&1 &
+fi
+if [ -s "$DIR/statusline-upstream.sh" ]; then
+    printf '%s' "$payload" | /bin/sh "$DIR/statusline-upstream.sh"
+fi
+exit 0
+"""
+
+private let nbStatusLinePython = """
+#!/usr/bin/env python3
+# nb-statusline.py — reads Claude Code status-line JSON on stdin, forwards a compact StatusLine event to Coucou.
+import sys, json, os, socket, time
+
+def main():
+    try:
+        payload = json.loads(sys.stdin.buffer.read() or b'{}')
+    except Exception:
+        return
+    sid = str(payload.get('session_id') or '')
+    # Throttle: at most one event per session every 3 s (Claude Code redraws often while streaming).
+    stamp = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'coucou-statusline-' + (sid[:8] or 'x'))
+    try:
+        if time.time() - os.path.getmtime(stamp) < 3:
+            return
+    except OSError:
+        pass
+    try:
+        open(stamp, 'w').close()
+    except OSError:
+        pass
+    cw = payload.get('context_window') or {}
+    rl = payload.get('rate_limits') or {}
+    fh = rl.get('five_hour') or {}
+    sd = rl.get('seven_day') or {}
+    model = payload.get('model') or {}
+    cost = payload.get('cost') or {}
+    out = {
+        'hook_event_name': 'StatusLine',
+        'session_id': sid,
+        'cwd': payload.get('cwd') or '',
+        'model': model.get('display_name') or model.get('id') or '',
+        'term_program': os.environ.get('TERM_PROGRAM', ''),
+        'bundle_id': os.environ.get('__CFBundleIdentifier', ''),
+    }
+    if isinstance(cw.get('used_percentage'), (int, float)):
+        out['context_pct'] = int(round(cw['used_percentage']))
+    if isinstance(cost.get('total_cost_usd'), (int, float)):
+        out['cost_usd'] = float(cost['total_cost_usd'])
+    if isinstance(fh.get('used_percentage'), (int, float)):
+        out['five_hour_pct'] = int(round(fh['used_percentage']))
+    if isinstance(fh.get('resets_at'), (int, float)):
+        out['five_hour_resets_at'] = int(fh['resets_at'])
+    if isinstance(sd.get('used_percentage'), (int, float)):
+        out['seven_day_pct'] = int(round(sd['used_percentage']))
+    if isinstance(sd.get('resets_at'), (int, float)):
+        out['seven_day_resets_at'] = int(sd['resets_at'])
+    path = os.path.expanduser('~/Library/Application Support/NotchBuddy/nb.sock')
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        s.connect(path)
+        s.sendall((json.dumps(out) + '\\n').encode())
+        s.close()
+    except Exception:
+        pass
+
+if __name__ == '__main__':
+    main()
+    sys.exit(0)
 """
