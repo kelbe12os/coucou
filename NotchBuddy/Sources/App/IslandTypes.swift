@@ -91,7 +91,7 @@ enum ChatProvider: String, CaseIterable, Codable {
 
     var defaultModel: String {
         switch self {
-        case .claudeCode: "default"
+        case .claudeCode: "opus"
         case .anthropic: "claude-sonnet-4-6"
         case .google:    "gemini-2.0-flash"
         case .openai:    "gpt-4o"

@@ -14,10 +14,10 @@ enum ClaudeCodeCLI {
     /// Model choices offered in the picker and in Settings. "default" means: do not pass --model,
     /// so Claude Code uses whatever the user configured for the CLI itself.
     static let modelChoices: [(id: String, label: String)] = [
-        ("default", "Default (your Claude Code setting)"),
         ("opus",    "Opus"),
         ("sonnet",  "Sonnet"),
         ("haiku",   "Haiku"),
+        ("default", "Default (your Claude Code setting)"),
     ]
 
     /// First executable `claude` found. $COUCOU_CLAUDE_BIN wins; then the usual install paths.
