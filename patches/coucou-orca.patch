@@ -161,7 +161,7 @@ index 3c1465c..e0a880d 100644
              autoCloseInterval = (v == 60) ? 15 : v
 diff --git a/NotchBuddy/Sources/App/ClaudeCodeCLI.swift b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
 new file mode 100644
-index 0000000..ff9fbb3
+index 0000000..d2222f8
 --- /dev/null
 +++ b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
 @@ -0,0 +1,160 @@
@@ -181,10 +181,10 @@ index 0000000..ff9fbb3
 +    /// Model choices offered in the picker and in Settings. "default" means: do not pass --model,
 +    /// so Claude Code uses whatever the user configured for the CLI itself.
 +    static let modelChoices: [(id: String, label: String)] = [
-+        ("default", "Default (your Claude Code setting)"),
 +        ("opus",    "Opus"),
 +        ("sonnet",  "Sonnet"),
 +        ("haiku",   "Haiku"),
++        ("default", "Default (your Claude Code setting)"),
 +    ]
 +
 +    /// First executable `claude` found. $COUCOU_CLAUDE_BIN wins; then the usual install paths.
@@ -789,7 +789,7 @@ index 41b71c0..6dbb654 100644
 +    sys.exit(0)
 +"""
 diff --git a/NotchBuddy/Sources/App/IslandTypes.swift b/NotchBuddy/Sources/App/IslandTypes.swift
-index 5200af8..8b46a88 100644
+index 5200af8..00b7de5 100644
 --- a/NotchBuddy/Sources/App/IslandTypes.swift
 +++ b/NotchBuddy/Sources/App/IslandTypes.swift
 @@ -66,12 +66,14 @@ enum AgentSource: Equatable {
@@ -819,7 +819,7 @@ index 5200af8..8b46a88 100644
  
      var defaultModel: String {
          switch self {
-+        case .claudeCode: "default"
++        case .claudeCode: "opus"
          case .anthropic: "claude-sonnet-4-6"
          case .google:    "gemini-2.0-flash"
          case .openai:    "gpt-4o"
