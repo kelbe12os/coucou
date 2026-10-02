@@ -256,7 +256,7 @@ final class AppState: ObservableObject {
     /// True when the right panel should carry the usage card or strip.
     var usageConfigured: Bool {
         HookServer.statusLineRelayInstalled()
-            || !(KeychainStore.shared.get("zai-api-key") ?? "").isEmpty
+            || ZaiKey.resolve() != nil
             || claudeUsage.updatedAt != nil
             || zaiUsage.updatedAt != nil
     }

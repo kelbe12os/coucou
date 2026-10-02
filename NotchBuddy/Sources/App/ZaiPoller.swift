@@ -1,6 +1,43 @@
 import Foundation
 import SwiftUI
 
+/// Where the Z.ai coding-plan key comes from. No Keychain on purpose: an ad-hoc signed app changes
+/// identity on every rebuild, so a Keychain item would prompt for access again and again.
+/// Order: a key saved from Coucou's Settings (file, mode 0600) wins; otherwise pi's own provider
+/// config, which the user maintains anyway for the glm workers.
+enum ZaiKey {
+    static var fileURL: URL { HookServer.supportDir.appendingPathComponent("zai-api-key") }
+    static var piConfigURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent/models.json")
+    }
+
+    /// (key, human-readable source) or nil when nothing usable exists.
+    static func resolve() -> (key: String, source: String)? {
+        if let s = try? String(contentsOf: fileURL, encoding: .utf8) {
+            let k = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !k.isEmpty { return (k, "saved in Coucou") }
+        }
+        if let data = try? Data(contentsOf: piConfigURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let providers = json["providers"] as? [String: Any],
+           let zai = providers["zai"] as? [String: Any],
+           let k = zai["apiKey"] as? String, !k.isEmpty, !k.hasPrefix("env:") {
+            return (k, "pi config (~/.pi/agent/models.json)")
+        }
+        return nil
+    }
+
+    static func save(_ key: String) {
+        let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        if k.isEmpty { clear(); return }
+        try? FileManager.default.createDirectory(at: HookServer.supportDir, withIntermediateDirectories: true)
+        try? k.write(to: fileURL, atomically: true, encoding: .utf8)
+        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o600 as NSNumber], ofItemAtPath: fileURL.path)
+    }
+
+    static func clear() { try? FileManager.default.removeItem(at: fileURL) }
+}
+
 /// Polls the Z.ai GLM coding-plan quota (5-hour and weekly windows) for the usage card.
 final class ZaiPoller: @unchecked Sendable {
     static let shared = ZaiPoller()
@@ -20,7 +57,7 @@ final class ZaiPoller: @unchecked Sendable {
     func pollNow() { poll() }
 
     private func poll() {
-        guard let key = KeychainStore.shared.get("zai-api-key"), !key.isEmpty else { return }
+        guard let key = ZaiKey.resolve()?.key else { return }
         fetchQuota(key: key)
     }
 

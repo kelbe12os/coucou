@@ -35,7 +35,8 @@ struct SettingsView: View {
     @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
     @State private var claudeHooksInstalled: Bool = HookServer.claudeHooksInstalled()
     @State private var relayInstalled: Bool = HookServer.statusLineRelayInstalled()
-    @State private var zaiKey: String = KeychainStore.shared.get("zai-api-key") ?? ""
+    @State private var zaiKey: String = ZaiKey.resolve()?.key ?? ""
+    @State private var zaiKeySource: String? = ZaiKey.resolve()?.source
 
     private func confirmRelayInstall() {
         let alert = NSAlert()
@@ -61,20 +62,10 @@ struct SettingsView: View {
         catch { statusMessage = "❌ \(error.localizedDescription)" }
     }
 
-    private func importZaiKeyFromPi() {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent/models.json")
-        guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let providers = json["providers"] as? [String: Any],
-              let zai = providers["zai"] as? [String: Any],
-              let key = zai["apiKey"] as? String, !key.isEmpty, !key.hasPrefix("env:") else {
-            statusMessage = "❌ No Z.ai key found in ~/.pi/agent/models.json (providers.zai.apiKey)."
-            return
-        }
-        zaiKey = key
-        KeychainStore.shared.set("zai-api-key", value: key)
-        ZaiPoller.shared.pollNow()
-        statusMessage = "✓ Z.ai key imported from pi."
+    private func refreshZaiKeySource() {
+        let r = ZaiKey.resolve()
+        zaiKeySource = r?.source
+        zaiKey = r?.key ?? ""
     }
 
     #if !APPSTORE
@@ -341,14 +332,27 @@ struct SettingsView: View {
                             Circle().fill(Color(hex: "#E0A030")).frame(width: 8, height: 8)
                             Text("Z.ai GLM coding plan").font(.system(size: 12, weight: .semibold))
                         }
-                        SecureField("Z.ai API key", text: $zaiKey).textFieldStyle(.roundedBorder)
+                        HStack(spacing: 6) {
+                            Circle().fill(zaiKeySource == nil ? Color(hex: "#F4505E") : Color(hex: "#22C55E")).frame(width: 8, height: 8)
+                            Text(zaiKeySource.map { "Key from \($0)" } ?? "No key: pi's provider config has none, and nothing is saved here")
+                                .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(2)
+                        }
+                        Text("Read from pi's config by default. Paste one here only to override; it is kept in a private file, never in the Keychain, so rebuilds never trigger an access prompt.")
+                            .font(.system(size: 10.5)).foregroundColor(.secondary)
+                        SecureField("Z.ai API key (override)", text: $zaiKey).textFieldStyle(.roundedBorder)
                         HStack(spacing: 10) {
-                            Button("Save") {
-                                KeychainStore.shared.set("zai-api-key", value: zaiKey)
+                            Button("Save override") {
+                                ZaiKey.save(zaiKey)
+                                refreshZaiKeySource()
                                 ZaiPoller.shared.pollNow()
-                                statusMessage = "✓ Z.ai key saved."
+                                statusMessage = "✓ Z.ai key saved in Coucou."
                             }.buttonStyle(.borderedProminent)
-                            Button("Import from pi") { importZaiKeyFromPi() }
+                            Button("Use pi's key") {
+                                ZaiKey.clear()
+                                refreshZaiKeySource()
+                                ZaiPoller.shared.pollNow()
+                                statusMessage = zaiKeySource == nil ? "No key in pi's config." : "✓ Using pi's key."
+                            }
                         }
                         if let e = state.zaiUsage.error {
                             Text(e).font(.system(size: 11)).foregroundColor(.red)

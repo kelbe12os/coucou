@@ -136,7 +136,7 @@ struct UsageCardView: View {
         if let e = g.error {
             Text("glm").font(titleFont).foregroundColor(titleColor)
             Text(e).font(titleFont).foregroundColor(Color(hex: "#F26B5B")).lineLimit(2)
-        } else if (KeychainStore.shared.get("zai-api-key") ?? "").isEmpty {
+        } else if ZaiKey.resolve() == nil {
             Text("glm").font(titleFont).foregroundColor(titleColor)
             Text("add the Z.ai key in Settings").font(titleFont).foregroundColor(titleColor).lineLimit(2)
         } else {
