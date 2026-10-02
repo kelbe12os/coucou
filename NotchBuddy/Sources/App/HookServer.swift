@@ -191,7 +191,7 @@ final class HookServer: @unchecked Sendable {
         let state = AppState.shared
         let sessionId = payload["session_id"] as? String ?? "unknown"
         let cwd = payload["cwd"] as? String ?? ""
-        let rawName = URL(fileURLWithPath: cwd).lastPathComponent
+        let rawName = Self.lastPathComponent(cwd)
         var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
         if let host = payload["remote_host"] as? String, !host.isEmpty {
             projectName += " @ " + host
@@ -388,7 +388,7 @@ final class HookServer: @unchecked Sendable {
         let state = AppState.shared
         let sessionId = payload["session_id"] as? String ?? "unknown"
         let cwd       = payload["cwd"]        as? String ?? ""
-        let rawName   = URL(fileURLWithPath: cwd).lastPathComponent
+        let rawName   = Self.lastPathComponent(cwd)
         var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
         if let host = payload["remote_host"] as? String, !host.isEmpty {
             projectName += " @ " + host
@@ -529,6 +529,12 @@ final class HookServer: @unchecked Sendable {
     }
 
     // MARK: - Project name alias mapping
+
+    /// Last path component for POSIX and Windows paths alike (remote sessions send "C:\\Users\\…").
+    private static func lastPathComponent(_ path: String) -> String {
+        let parts = path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).filter { !$0.isEmpty }
+        return parts.last.map(String.init) ?? ""
+    }
 
     private func aliasProjectName(_ name: String) -> String {
         let aliases: [String: String] = [
