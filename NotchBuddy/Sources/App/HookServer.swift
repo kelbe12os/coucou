@@ -56,6 +56,17 @@ final class HookServer: @unchecked Sendable {
     /// Cancels the approval fd source (which closes the fd via its cancel handler), shows a
     /// 3-second note, clears approval state, then collapses the island.
     @MainActor
+    /// Closes the question card (answered in the terminal, or the user clicked OK).
+    @MainActor
+    func dismissQuestion() {
+        let state = AppState.shared
+        guard let q = state.pendingQuestion else { return }
+        state.pendingQuestion = nil
+        state.isPinned = false
+        state.updateTask(id: q.pillId, state: .working)
+        if state.view == .question { state.view = state.tasks.isEmpty ? .empty : .overview }
+    }
+
     private func dismissApprovalCard(note: String) {
         // cancelApprovalFDSource() triggers the cancel handler which closes the fd.
         // Never close the fd here directly — Apple requires it to happen in the cancel handler.
@@ -280,6 +291,12 @@ final class HookServer: @unchecked Sendable {
         }
 
         let focused = state.focusId == agentId
+
+        // A shown question is answered in the terminal; the session's next event means it is done.
+        if let q = state.pendingQuestion, q.pillId == agentId, sessionId == q.sessionId,
+           ["PostToolUse", "PostToolUseFailure", "Stop", "StopFailure", "UserPromptSubmit", "SessionEnd"].contains(name) {
+            dismissQuestion()
+        }
 
         // While a permission request is pending, dismiss when the resolving event arrives,
         // then continue normal processing. Only skip normal processing when unresolved.
@@ -517,6 +534,29 @@ final class HookServer: @unchecked Sendable {
         var command = toolInput["command"] as? String ?? tool
         let inputKey = Self.approvalInputKey(toolInput)
         nbLog("PermissionRequest \(tool) [\(pillId)]")
+
+        // A question is not a permission: show it, and hand the prompt straight back to the terminal.
+        if tool == "AskUserQuestion" {
+            Task.detached { [weak self] in
+                self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+                close(fd)
+            }
+            var text = "Claude Code is asking a question"
+            var options: [String] = []
+            if let qs = toolInput["questions"] as? [[String: Any]], let q = qs.first {
+                if let t = q["question"] as? String, !t.isEmpty { text = t }
+                options = (q["options"] as? [[String: Any]] ?? []).compactMap { $0["label"] as? String }
+            }
+            activeSessionId = sessionId
+            upsertWorkspaceTask(id: pillId, projectName: projectName, cwd: cwd)
+            state.updateTask(id: pillId, state: .question)
+            state.pendingQuestion = QuestionInfo(sessionId: sessionId, text: text, options: options, pillId: pillId)
+            state.isPinned = true
+            SoundEngine.shared.play("pop")
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.72)) { state.focusId = pillId }
+            expandIfNeeded(to: .question)
+            return
+        }
 
         if pendingApprovalFD >= 0 {
             // Displace the previous request: write "ask" then cancel its source.

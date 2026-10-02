@@ -40,6 +40,15 @@ struct ApprovalInfo: Sendable {
     var pillId: String
 }
 
+/// A question Claude Code is asking in its terminal (AskUserQuestion). Shown from the notch,
+/// answered in the terminal: the hook gets "ask" straight away so the prompt appears there.
+struct QuestionInfo: Sendable {
+    var sessionId: String
+    var text: String
+    var options: [String]
+    var pillId: String
+}
+
 // MARK: - Pill badge (shown on pill edge when non-focused task has an alert)
 
 enum PillBadge { case approval, finished, error }

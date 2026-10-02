@@ -291,14 +291,33 @@ struct QuestionView: View {
     var body: some View {
         ZStack {
             CardBackground(wash: .cyan)
+            let q = state.pendingQuestion
             VStack(alignment: .leading, spacing: 5) {
-                AgentWho(task: state.focusTask, label: "Claude Code is asking a question")
-                Text("Which search engine to use?")
-                    .font(.system(size: 15, weight: .semibold))
-                HStack(spacing: 8) {
-                    ForEach(["Postgres full-text", "Meilisearch", "Algolia"], id: \.self) { opt in
-                        SecondaryButton(opt) { /* answer */ }
+                AgentWho(task: state.focusTask, label: "is asking a question · answer in the terminal")
+                Text(q?.text ?? "Claude Code is asking a question")
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                if let opts = q?.options, !opts.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(Array(opts.prefix(4)), id: \.self) { opt in
+                            Text(opt)
+                                .font(.system(size: 11))
+                                .foregroundColor(Color(hex: "#C8CDD4"))
+                                .lineLimit(1)
+                                .padding(.horizontal, 9).padding(.vertical, 4)
+                                .background(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                        }
                     }
+                }
+                HStack(spacing: 8) {
+                    PrimaryButton("Answer in terminal") {
+                        let ids = ["com.stablyai.orca", "com.mitchellh.ghostty", "com.microsoft.VSCode"]
+                        if let app = ids.compactMap({ id in NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id } }).first {
+                            app.activate(options: .activateIgnoringOtherApps)
+                        }
+                    }
+                    SecondaryButton("OK") { HookServer.shared.dismissQuestion() }
                 }
             }
             .padding(.leading, 116)
