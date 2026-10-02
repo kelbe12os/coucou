@@ -55,7 +55,6 @@ final class HookServer: @unchecked Sendable {
 
     /// Cancels the approval fd source (which closes the fd via its cancel handler), shows a
     /// 3-second note, clears approval state, then collapses the island.
-    @MainActor
     /// Closes the question card (answered in the terminal, or the user clicked OK).
     @MainActor
     func dismissQuestion() {
@@ -67,6 +66,7 @@ final class HookServer: @unchecked Sendable {
         if state.view == .question { state.view = state.tasks.isEmpty ? .empty : .overview }
     }
 
+    @MainActor
     private func dismissApprovalCard(note: String) {
         // cancelApprovalFDSource() triggers the cancel handler which closes the fd.
         // Never close the fd here directly — Apple requires it to happen in the cancel handler.
