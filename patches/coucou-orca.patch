@@ -516,7 +516,7 @@ index 9a47a33..9d08e06 100644
      static func handle(urls: [URL], state: AppState) async {
          guard let url = urls.first else { return }
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
-index 41b71c0..61111f4 100644
+index 41b71c0..f6423ad 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
 +++ b/NotchBuddy/Sources/App/HookServer.swift
 @@ -158,13 +158,44 @@ final class HookServer: @unchecked Sendable {
@@ -556,8 +556,9 @@ index 41b71c0..61111f4 100644
          let state = AppState.shared
          let sessionId = payload["session_id"] as? String ?? "unknown"
          let cwd = payload["cwd"] as? String ?? ""
-         let rawName = URL(fileURLWithPath: cwd).lastPathComponent
+-        let rawName = URL(fileURLWithPath: cwd).lastPathComponent
 -        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        let rawName = Self.lastPathComponent(cwd)
 +        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
 +        if let host = payload["remote_host"] as? String, !host.isEmpty {
 +            projectName += " @ " + host
@@ -596,11 +597,13 @@ index 41b71c0..61111f4 100644
      // MARK: - Permission request (blocking — Claude Code waits for decision)
  
      @MainActor
-@@ -347,7 +389,10 @@ final class HookServer: @unchecked Sendable {
+@@ -346,8 +388,11 @@ final class HookServer: @unchecked Sendable {
+         let state = AppState.shared
          let sessionId = payload["session_id"] as? String ?? "unknown"
          let cwd       = payload["cwd"]        as? String ?? ""
-         let rawName   = URL(fileURLWithPath: cwd).lastPathComponent
+-        let rawName   = URL(fileURLWithPath: cwd).lastPathComponent
 -        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        let rawName   = Self.lastPathComponent(cwd)
 +        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
 +        if let host = payload["remote_host"] as? String, !host.isEmpty {
 +            projectName += " @ " + host
@@ -618,7 +621,20 @@ index 41b71c0..61111f4 100644
          guard isVSCode else {
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
-@@ -498,19 +542,20 @@ final class HookServer: @unchecked Sendable {
+@@ -486,6 +530,12 @@ final class HookServer: @unchecked Sendable {
+ 
+     // MARK: - Project name alias mapping
+ 
++    /// Last path component for POSIX and Windows paths alike (remote sessions send "C:\\Users\\…").
++    private static func lastPathComponent(_ path: String) -> String {
++        let parts = path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).filter { !$0.isEmpty }
++        return parts.last.map(String.init) ?? ""
++    }
++
+     private func aliasProjectName(_ name: String) -> String {
+         let aliases: [String: String] = [
+             "notch-buddy":  "Notch Buddy",
+@@ -498,19 +548,20 @@ final class HookServer: @unchecked Sendable {
      // MARK: - French step labels
  
      private func frenchStep(tool: String, input: [String: Any]) -> String {
@@ -650,7 +666,7 @@ index 41b71c0..61111f4 100644
              "NotebookEdit": "Notebook",
          ]
          let label = labels[tool] ?? tool
-@@ -563,11 +608,35 @@ final class HookServer: @unchecked Sendable {
+@@ -563,11 +614,35 @@ final class HookServer: @unchecked Sendable {
          let pyURL = wrapperURL.deletingLastPathComponent().appendingPathComponent("nb-hook.py")
          try? nbHookPythonGitHub.write(to: pyURL, atomically: true, encoding: .utf8)
          _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: pyURL.path)
@@ -686,7 +702,7 @@ index 41b71c0..61111f4 100644
      /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
      static func hooksNeedUpdate() -> Bool {
          let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-@@ -681,6 +750,81 @@ final class HookServer: @unchecked Sendable {
+@@ -681,6 +756,81 @@ final class HookServer: @unchecked Sendable {
          try newData.write(to: settingsURL, options: .atomic)
      }
  
@@ -768,7 +784,7 @@ index 41b71c0..61111f4 100644
      // MARK: - App Store: hooks via security-scoped bookmark
  
      #if APPSTORE
-@@ -1394,3 +1538,83 @@ def main():
+@@ -1394,3 +1544,83 @@ def main():
  main()
  sys.exit(0)
  """
