@@ -1268,7 +1268,7 @@ struct IntegrationCardView: View {
                    : task.id == "integration_calcom"  ? appState.calcomError
                    : nil
         if let err = svcErr { return err }
-        let isHooks = task.id == "agent_gemini" || task.id == "agent_antigravity"
+        let isHooks = task.id == "integration_claude" || task.id == "agent_gemini" || task.id == "agent_antigravity"
         let isAI    = task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai"
         if isConfigured {
             if isHooks { return "Hooks installed" }
@@ -1382,7 +1382,7 @@ struct IntegrationCardView: View {
 
                 HStack(spacing: 8) {
                     if task.id == "integration_claude" {
-                        Button("Open Visual Studio Code") { openVSCode() }
+                        Button("Open Orca") { openHost() }
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Color(hex: task.color).opacity(0.7))
                             .buttonStyle(.plain)
@@ -1485,29 +1485,16 @@ struct IntegrationCardView: View {
         }
     }
 
-    private func openVSCode() {
-        let ids = ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
-        let appURL = ids.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first
-
-        // If we have a project folder, open it directly in VS Code
-        if let cwd = task.sessionCwd, !cwd.isEmpty, let appURL = appURL {
-            NSWorkspace.shared.open(
-                [URL(fileURLWithPath: cwd)],
-                withApplicationAt: appURL,
-                configuration: .init(),
-                completionHandler: nil
-            )
-            return
-        }
-
-        // No cwd: activate running instance or launch fresh
+    /// Bring the app hosting Claude Code sessions to the front: Orca first, VS Code as fallback.
+    private func openHost() {
+        let ids = ["com.stablyai.orca", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
         if let running = ids.compactMap({ id in
             NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
         }).first {
             running.activate(options: .activateIgnoringOtherApps)
             return
         }
-        if let appURL = appURL {
+        if let appURL = ids.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
             NSWorkspace.shared.openApplication(at: appURL, configuration: .init(), completionHandler: nil)
         }
     }

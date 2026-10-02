@@ -194,7 +194,8 @@ final class AppState: ObservableObject {
     }
 
     // Active integration pills (VS Code excluded — always on). Max 4.
-    @Published var activeIntegrations: Set<String> = ["integration_resend", "integration_n8n", "integration_vercel", "integration_github"] {
+    // Fork default: no service pills until the user checks them in Settings → Active pills.
+    @Published var activeIntegrations: Set<String> = [] {
         didSet {
             if let data = try? JSONEncoder().encode(Array(activeIntegrations)) {
                 UserDefaults.standard.set(data, forKey: "activeIntegrations")
