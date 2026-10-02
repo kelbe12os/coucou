@@ -11,7 +11,7 @@ Coucou is an open-source macOS notch companion that shows live Claude Code sessi
 (branch `orca` of https://github.com/kelbe12os/coucou) adds Orca pane support, an Orca-matched
 idle card, chat through the local Claude Code CLI, pi worker pills, a usage card for Claude and
 GLM, and a relay for sessions on other machines. Run every command below from the fork root. The Orca patch
-(`patches/coucou-orca.patch`) teaches that build to accept Orca terminal panes as a Claude Code
+(`patches/the fork.patch`) teaches that build to accept Orca terminal panes as a Claude Code
 host, so sessions running inside Orca show up like any other, names the idle slot after Orca,
 and adds a chat provider that runs the local `claude -p` so the notch chat works through your
 Claude Code login with no API key. The pi extension

@@ -4,7 +4,7 @@ The island's header has three tabs: home, chat and upload. This guide explains h
 wired, how to add a fourth one with your own widget, and a design for a scriptable widget tab
 that needs no rebuild per widget. All paths are inside the upstream checkout the build script
 manages, `build/coucou/NotchBuddy/Sources/App/`, on the `orca` branch; every change ends up in
-`patches/coucou-orca.patch` and is rebuilt with `scripts/build.sh --install`.
+`patches/the fork.patch` and is rebuilt with `scripts/build.sh --install`.
 
 Line numbers below are from the fork at the time of writing (2026-10-02) and drift as the patch
 grows; search for the quoted code instead of trusting the numbers.
