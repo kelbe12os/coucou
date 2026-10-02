@@ -43,6 +43,17 @@ final class FileDropNSView: NSView {
 // MARK: - File drop handler
 
 enum FileDropHandler {
+    /// Dropped files are copied into <support>/inbox for the chat to read. Nothing needs them
+    /// after the app quits, so each launch starts with an empty inbox.
+    static func cleanInbox() {
+        let inbox = HookServer.supportDir.appendingPathComponent("inbox")
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: inbox, includingPropertiesForKeys: nil) else { return }
+        var removed = 0
+        for item in items where (try? fm.removeItem(at: item)) != nil { removed += 1 }
+        if removed > 0 { appendAppLog("nb.log", "Inbox cleaned: \(removed) file\(removed == 1 ? "" : "s") removed") }
+    }
+
     @MainActor
     static func handle(urls: [URL], state: AppState) async {
         guard let url = urls.first else { return }

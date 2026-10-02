@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Warm up Keychain cache on main thread BEFORE any poller or view touches it
         _ = KeychainStore.shared
         NSApp.setActivationPolicy(.accessory)
+        FileDropHandler.cleanInbox()
         setupMenuBarItem()
         setupIsland()
     }
