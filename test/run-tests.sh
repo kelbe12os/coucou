@@ -137,7 +137,7 @@ fi
 name="extension-harness"
 SOCK="$TMP/nb.sock"
 out="$(COUCOU_SOCKET="$SOCK" "$(bun_bin)" run "$REPO/test/dispatch-harness.ts" "$REPO/pi/coucou-status.ts" 2>&1)" && rc=0 || rc=$?
-if [ "$rc" -eq 0 ] && has "$out" "21 events" && has "$out" "all tags valid for Coucou"; then
+if [ "$rc" -eq 0 ] && has "$out" "22 events" && has "$out" "all tags valid for Coucou" && has "$out" "tokens step: tokens"; then
   pass "$name"
 else
   notok "$name" "exit $rc; harness output missing '21 events' / 'all tags valid for Coucou'"

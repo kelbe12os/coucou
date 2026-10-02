@@ -39,6 +39,9 @@ await fire("tool_execution_end", { toolName: "bash", isError: false });
 await fire("tool_approval_requested", { toolName: "bash", reason: "rm -rf", approvalMode: "ask" });
 await fire("tool_execution_start", { toolName: "write", args: { path: "docs/briefs/07-auth-hooks-report.md", content: "# report" } });
 await fire("tool_execution_end", { toolName: "write", isError: false });
+await fire("message_end", { message: { role: "assistant", usage: { input: 1200, output: 800, cacheRead: 50000, cacheWrite: 0 } } });
+await fire("message_end", { message: { role: "assistant", usage: { input: 1500, output: 2200, cacheRead: 62000, cacheWrite: 0 } } });
+await fire("message_end", { message: { role: "user" } });
 await fire("tool_execution_start", { toolName: "bash", args: { command: "orca orchestration worker-done --outcome succeeded --report-path docs/briefs/07-auth-hooks-report.md --json" } });
 await fire("tool_execution_end", { toolName: "bash", isError: false });
 await fire("agent_end", { messages: [{ role: "assistant", content: [{ type: "text", text: "Done. Report written." }] }] });
@@ -53,3 +56,5 @@ for (const p of received) {
 console.log(`\n${received.length} events, tag=${received[0]?.coucou_agent}, tagLen=${received[0]?.coucou_agent.length}`);
 const bad = received.filter((p) => !/^[a-z0-9-]{1,24}$/.test(p.coucou_agent) || p.coucou_agent === "claude");
 console.log(bad.length ? `INVALID TAGS: ${bad.length}` : "all tags valid for Coucou");
+const tok = received.find((p) => String(p.tool_name || "").startsWith("tokens ·"));
+console.log(tok ? `tokens step: ${tok.tool_name}` : "TOKENS STEP MISSING");

@@ -19,6 +19,8 @@
 //   send --type status            → "note · <subject>"
 //   worker-done --outcome X       → finished card "worker_done · X"
 //   write docs/briefs/*-report.md → "report written · <file>"
+// Token totals for the session (summed from every assistant message) are added as one step,
+// "tokens · 61k in · 49k out · 1.8M cache · 36 turns", right before the finished or error card.
 // A run that ends with a provider error shows the error card with the provider's message.
 //
 // Set COUCOU_DISABLE=1 to turn the extension off for one process.
@@ -128,12 +130,31 @@ export default function (pi: ExtensionAPI) {
   let doneSent = false;     // worker_done milestone already produced the finished card
   let terminalSent = false; // one Stop/StopFailure per agent run
   let lastTerminal = { key: "", at: 0 }; // pi retries a failed request as new runs; collapse repeats
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, turns: 0 };
+
+  function fmtTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+    return String(n);
+  }
+
+  /// One step summarising this session's token use; emitted once before a terminal event.
+  let usageReported = false;
+  function reportUsage(): void {
+    if (usageReported || usage.turns === 0) return;
+    usageReported = true;
+    const cache = usage.cacheRead + usage.cacheWrite;
+    const text = `tokens · ${fmtTokens(usage.input)} in · ${fmtTokens(usage.output)} out` +
+      (cache > 0 ? ` · ${fmtTokens(cache)} cache` : "") + ` · ${usage.turns} turn${usage.turns === 1 ? "" : "s"}`;
+    emit("PreToolUse", { tool_name: text, tool_input: {} });
+  }
 
   function terminal(event: string, message: string): void {
     const key = `${event}|${message}`;
     const now = Date.now();
     if (key === lastTerminal.key && now - lastTerminal.at < 120_000) return;
     lastTerminal = { key, at: now };
+    reportUsage();
     emit(event, { message });
   }
 
@@ -178,7 +199,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_e: any, ctx: any) => {
     refresh(ctx);
-    announced = false; doneSent = false; terminalSent = false;
+    announced = false; doneSent = false; terminalSent = false; usageReported = false;
+    usage.input = usage.output = usage.cacheRead = usage.cacheWrite = usage.turns = 0;
     if (tag) announce(); // otherwise the first prompt names the brief and announces then
   });
 
@@ -226,6 +248,17 @@ export default function (pi: ExtensionAPI) {
     refresh(ctx);
     // A trailing "?" puts the pill in the question state; the approval itself stays in the pane.
     emit("Notification", { message: `${e?.toolName || "tool"} needs approval in the pane?` });
+  });
+
+  pi.on("message_end", (e: any, _ctx: any) => {
+    const m = e?.message;
+    if (m?.role !== "assistant" || !m?.usage) return;
+    const u = m.usage;
+    usage.input += Number(u.input) || 0;
+    usage.output += Number(u.output) || 0;
+    usage.cacheRead += Number(u.cacheRead) || 0;
+    usage.cacheWrite += Number(u.cacheWrite) || 0;
+    usage.turns += 1;
   });
 
   pi.on("agent_end", (e: any, ctx: any) => {
