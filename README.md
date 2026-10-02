@@ -26,6 +26,7 @@ test/run-tests.sh            test suite; runs on any Mac, no Xcode needed
 test/dispatch-harness.ts     synthetic 21-event test of the extension (bun)
 test/live-harness.ts         drives a real pi run against a stand-in socket (manual)
 docs/rebuild-plan.html       the full plan
+docs/widgets-guide.md        how to add tabs and widgets to the island
 docs/wireframe.html          UI walkthrough
 docs/briefs/                 briefs and worker reports
 build/                       source checkout created by build.sh (gitignored)
