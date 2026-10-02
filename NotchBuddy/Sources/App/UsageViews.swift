@@ -60,7 +60,7 @@ private struct UsageRow: View {
             Text(label)
                 .font(.system(size: 10.5))
                 .foregroundColor(Color(hex: "#9AA3B2"))
-                .frame(width: 48, alignment: .leading)
+                .frame(width: 40, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color(hex: "#1E2330"))
@@ -72,7 +72,7 @@ private struct UsageRow: View {
             Text(pctText(pct))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundColor(Color(hex: "#C9D0DB"))
-                .frame(width: 36, alignment: .trailing)
+                .frame(width: 30, alignment: .trailing)
         }
         .opacity(dim ? 0.45 : 1)
     }
@@ -100,9 +100,12 @@ struct UsageCardView: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            claudeSection
-            glmSection
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) { claudeSection }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Rectangle().fill(Color(hex: "#1E2330")).frame(width: 1)
+            VStack(alignment: .leading, spacing: 6) { glmSection }
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
     }
@@ -114,24 +117,16 @@ struct UsageCardView: View {
     private var claudeSection: some View {
         let c = state.claudeUsage
         if c.updatedAt == nil {
-            HStack(spacing: 4) {
-                Text(HookServer.statusLineRelayInstalled() ? "claude · not reporting yet" : "claude · install the relay in Settings")
-                    .font(titleFont)
-                    .foregroundColor(titleColor)
-                Spacer(minLength: 0)
-            }
+            Text("claude").font(titleFont).foregroundColor(titleColor)
+            Text(HookServer.statusLineRelayInstalled() ? "not reporting yet" : "install the relay in Settings")
+                .font(titleFont).foregroundColor(titleColor).lineLimit(2)
         } else {
-            HStack(spacing: 4) {
-                Text(c.isStale ? "claude · as of \(timeHHmm(c.updatedAt))" : "claude")
-                    .font(titleFont)
-                    .foregroundColor(titleColor)
-                Spacer(minLength: 0)
-                Text(joinResets(c.fiveHourResetsAt, c.sevenDayResetsAt))
-                    .font(titleFont)
-                    .foregroundColor(titleColor)
-            }
+            Text(c.isStale ? "claude · as of \(timeHHmm(c.updatedAt))" : "claude")
+                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
             UsageRow(label: "5 hour", pct: c.fiveHourPct, base: claudeBarBase, dim: c.isStale)
             UsageRow(label: "7 day", pct: c.sevenDayPct, base: claudeBarBase, dim: c.isStale)
+            Text("resets \(joinResets(c.fiveHourResetsAt, c.sevenDayResetsAt))")
+                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
         }
     }
 
@@ -139,31 +134,18 @@ struct UsageCardView: View {
     private var glmSection: some View {
         let g = state.zaiUsage
         if let e = g.error {
-            HStack(spacing: 4) {
-                Text("glm · \(e)")
-                    .font(titleFont)
-                    .foregroundColor(Color(hex: "#F26B5B"))
-                Spacer(minLength: 0)
-            }
+            Text("glm").font(titleFont).foregroundColor(titleColor)
+            Text(e).font(titleFont).foregroundColor(Color(hex: "#F26B5B")).lineLimit(2)
         } else if (KeychainStore.shared.get("zai-api-key") ?? "").isEmpty {
-            HStack(spacing: 4) {
-                Text("glm · add the Z.ai key in Settings")
-                    .font(titleFont)
-                    .foregroundColor(titleColor)
-                Spacer(minLength: 0)
-            }
+            Text("glm").font(titleFont).foregroundColor(titleColor)
+            Text("add the Z.ai key in Settings").font(titleFont).foregroundColor(titleColor).lineLimit(2)
         } else {
-            HStack(spacing: 4) {
-                Text("glm · z.ai \(g.level ?? "")")
-                    .font(titleFont)
-                    .foregroundColor(titleColor)
-                Spacer(minLength: 0)
-                Text(joinResets(g.fiveHourResetsAt, g.weeklyResetsAt))
-                    .font(titleFont)
-                    .foregroundColor(titleColor)
-            }
+            Text("glm · z.ai \(g.level ?? "")" + (g.isStale ? " · as of \(timeHHmm(g.updatedAt))" : ""))
+                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
             UsageRow(label: "5 hour", pct: g.fiveHourPct, base: glmBarBase, dim: g.isStale)
             UsageRow(label: "weekly", pct: g.weeklyPct, base: glmBarBase, dim: g.isStale)
+            Text("resets \(joinResets(g.fiveHourResetsAt, g.weeklyResetsAt))")
+                .font(titleFont).foregroundColor(titleColor).lineLimit(1)
         }
     }
 }
