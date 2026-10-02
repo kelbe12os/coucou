@@ -124,7 +124,7 @@ struct OverviewView: View {
         switch task.id {
         case "integration_claude":
             // Jump to the app hosting the Claude Code session: Orca first, then VS Code.
-            let hostBundleIds = ["com.stablyai.orca", "com.microsoft.VSCode"]
+            let hostBundleIds = ["com.stablyai.orca", "com.mitchellh.ghostty", "com.microsoft.VSCode"]
             if let app = hostBundleIds.compactMap({ id in
                 NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
             }).first {
@@ -1490,7 +1490,7 @@ struct IntegrationCardView: View {
 
     /// Bring the app hosting Claude Code sessions to the front: Orca first, VS Code as fallback.
     private func openHost() {
-        let ids = ["com.stablyai.orca", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
+        let ids = ["com.stablyai.orca", "com.mitchellh.ghostty", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
         if let running = ids.compactMap({ id in
             NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
         }).first {

@@ -340,8 +340,8 @@ final class HookServer: @unchecked Sendable {
 
     /// Terminals whose Claude Code sessions show in the island and get approval cards.
     /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
-    /// bundle com.stablyai.orca). Add more tokens here to support other terminals.
-    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca"]
+    /// bundle com.stablyai.orca) and Ghostty. Add more tokens here to support other terminals.
+    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca", "ghostty"]
 
     static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
         let t = termProgram.lowercased(), b = bundleId.lowercased()
