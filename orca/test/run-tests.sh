@@ -133,15 +133,7 @@ else
   notok "$name" "exit $rc, or the temp HOME changed"
 fi
 
-# 12. patch-new-files: the patch must carry its new Swift files (a commit made with -a once dropped one)
-name="patch-new-files"
-missing=""
-for f in ClaudeCodeCLI.swift ZaiPoller.swift UsageViews.swift RelayServer.swift; do
-  grep -qE "^\+\+\+ b/NotchBuddy/Sources/App/$f" "$REPO/patches/coucou-orca.patch" || missing="$missing $f"
-done
-if [ -z "$missing" ]; then pass "$name"; else notok "$name" "patch lacks:$missing"; fi
-
-# 13. extension-harness
+# 12. extension-harness
 name="extension-harness"
 SOCK="$TMP/nb.sock"
 out="$(COUCOU_SOCKET="$SOCK" "$(bun_bin)" run "$REPO/test/dispatch-harness.ts" "$REPO/pi/coucou-status.ts" 2>&1)" && rc=0 || rc=$?

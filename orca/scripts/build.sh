@@ -5,14 +5,12 @@ source "$REPO/scripts/lib.sh"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/build.sh [--check] [--install] [--ref <git-ref>] [--src <dir>] [--verbose]
+Usage: orca/scripts/build.sh [--check] [--install] [--verbose]
 
-Build Coucou (upstream NotchBuddy) from source with the Orca patch.
+Build this fork of Coucou from the checkout you are in (branch orca).
 
   --check      check prerequisites only, then exit (0 ok, 1 not ok)
   --install    also install the built app to /Applications/Coucou.app
-  --ref REF    ref to build from the fork (default: orca; e.g. --ref main for plain upstream)
-  --src DIR    source checkout dir (default: build/coucou inside this repo)
   --verbose    show full xcodegen/xcodebuild output
 EOF
 }
@@ -20,8 +18,6 @@ EOF
 CHECK=0
 INSTALL=0
 VERBOSE=0
-REF="$UPSTREAM_REF_DEFAULT"
-SRC="$REPO/build/coucou"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,11 +25,6 @@ while [ $# -gt 0 ]; do
     --check) CHECK=1 ;;
     --install) INSTALL=1 ;;
     --verbose) VERBOSE=1 ;;
-    --ref|--src)
-      if [ $# -lt 2 ]; then usage >&2; exit 2; fi
-      if [ "$1" = "--ref" ]; then REF="$2"; else SRC="$2"; fi
-      shift
-      ;;
     *) usage >&2; exit 2 ;;
   esac
   shift
@@ -85,43 +76,10 @@ if [ "$PROBLEMS" -ne 0 ]; then
   die "prerequisites failed (fix the problems above, then rerun)"
 fi
 
-# Step 2: source.
-if [ ! -d "$SRC/.git" ]; then
-  mkdir -p "$(dirname "$SRC")"
-  log "clone $UPSTREAM_URL -> $SRC"
-  git clone "$UPSTREAM_URL" "$SRC"
-else
-  # An older checkout may still point at the original upstream; follow the configured URL.
-  if [ "$(git -C "$SRC" remote get-url origin)" != "$UPSTREAM_URL" ]; then
-    log "origin -> $UPSTREAM_URL"
-    git -C "$SRC" remote set-url origin "$UPSTREAM_URL"
-  fi
-  log "fetch origin in $SRC"
-  git -C "$SRC" fetch --quiet origin
-fi
-CHECKOUT="$REF"
-if git -C "$SRC" rev-parse --verify -q "origin/$REF" >/dev/null 2>&1; then
-  CHECKOUT="origin/$REF"
-fi
-git -C "$SRC" checkout -q -B orca "$CHECKOUT"
+# Step 2: source is this repository (the fork's checkout); nothing to clone or patch.
+SRC="$APP_ROOT"
 log "building at: $(git -C "$SRC" log -1 --format='%h %ad %s' --date=short)"
-
-# Step 3: patch (idempotent). The fork's "orca" branch already contains every change, so the
-# patch only matters when building a plain upstream ref; the marker below tells the two apart.
-PATCH="$REPO/patches/coucou-orca.patch"
-if grep -q 'com.stablyai.orca' "$SRC/NotchBuddy/Sources/App/HookServer.swift" 2>/dev/null; then
-  ok "source already carries the Orca changes (fork branch); patch step skipped"
-elif git -C "$SRC" apply --check --reverse "$PATCH" >/dev/null 2>&1; then
-  ok "patch already applied"
-elif git -C "$SRC" apply --check "$PATCH" >/dev/null 2>&1; then
-  git -C "$SRC" apply "$PATCH"
-  # -A, not -a: the patch creates new source files and those must be in the commit too.
-  git -C "$SRC" add -A NotchBuddy/Sources NotchBuddy/Resources NotchBuddy/project.yml
-  git -C "$SRC" -c user.name=coucou-orca -c user.email=coucou-orca@local commit -qm "Apply coucou-orca.patch"
-  ok "patch applied and committed"
-else
-  die "patch does not apply at $(git -C "$SRC" rev-parse --short HEAD); upstream moved. See docs/rebuild-plan.html step 02 (apply the three edits by hand) or build with --ref 8a5c263"
-fi
+grep -q 'com.stablyai.orca' "$SRC/NotchBuddy/Sources/App/HookServer.swift" || die "this checkout does not carry the Orca changes (wrong branch?)"
 
 # Step 4: build.
 run_in() {
