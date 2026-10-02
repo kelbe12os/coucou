@@ -108,7 +108,7 @@ if git -C "$SRC" apply --check --reverse "$PATCH" >/dev/null 2>&1; then
 elif git -C "$SRC" apply --check "$PATCH" >/dev/null 2>&1; then
   git -C "$SRC" apply "$PATCH"
   # -A, not -a: the patch creates new source files and those must be in the commit too.
-  git -C "$SRC" add -A NotchBuddy/Sources
+  git -C "$SRC" add -A NotchBuddy/Sources NotchBuddy/Resources NotchBuddy/project.yml
   git -C "$SRC" -c user.name=coucou-orca -c user.email=coucou-orca@local commit -qm "Apply coucou-orca.patch"
   ok "patch applied and committed"
 else

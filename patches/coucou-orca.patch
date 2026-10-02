@@ -1,3 +1,19 @@
+diff --git a/NotchBuddy/Resources/Info.plist b/NotchBuddy/Resources/Info.plist
+index 4f0b78b..c66e6ed 100644
+--- a/NotchBuddy/Resources/Info.plist
++++ b/NotchBuddy/Resources/Info.plist
+@@ -23,9 +23,9 @@
+ 	<key>LSUIElement</key>
+ 	<true/>
+ 	<key>NSAccessibilityUsageDescription</key>
+-	<string>Pour lire le titre de la fenêtre active et l'attacher comme contexte.</string>
++	<string>Coucou reads the front window's title to attach it as chat context.</string>
+ 	<key>NSAppleEventsUsageDescription</key>
+-	<string>Pour sauter au terminal et envoyer des mails.</string>
++	<string>Coucou brings your terminal to the front and can send a dropped file by email.</string>
+ 	<key>NSHighResolutionCapable</key>
+ 	<true/>
+ 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 diff --git a/NotchBuddy/Sources/App/AppDelegate.swift b/NotchBuddy/Sources/App/AppDelegate.swift
 index f94af2b..317034a 100644
 --- a/NotchBuddy/Sources/App/AppDelegate.swift
@@ -467,7 +483,7 @@ index 5144fc4..e8bed59 100644
          state.stateOverride = .error
          state.noteMessage = message
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
-index 41b71c0..ad7aca9 100644
+index 41b71c0..6dbb654 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
 +++ b/NotchBuddy/Sources/App/HookServer.swift
 @@ -158,6 +158,34 @@ final class HookServer: @unchecked Sendable {
@@ -546,7 +562,39 @@ index 41b71c0..ad7aca9 100644
          guard isVSCode else {
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
-@@ -563,11 +601,35 @@ final class HookServer: @unchecked Sendable {
+@@ -498,19 +536,20 @@ final class HookServer: @unchecked Sendable {
+     // MARK: - French step labels
+ 
+     private func frenchStep(tool: String, input: [String: Any]) -> String {
++        // Step labels shown in the ticker. Fork: English, close to the tool names Claude Code uses.
+         let labels: [String: String] = [
+-            "Bash":       "Exécute",
+-            "Read":       "Lit",
+-            "Write":      "Écrit",
+-            "Edit":       "Modifie",
+-            "Glob":       "Cherche",
+-            "Grep":       "Recherche",
+-            "WebSearch":  "Recherche web",
+-            "WebFetch":   "Récupère",
+-            "TodoWrite":  "Tâches",
++            "Bash":       "Bash",
++            "Read":       "Read",
++            "Write":      "Write",
++            "Edit":       "Edit",
++            "Glob":       "Find",
++            "Grep":       "Search",
++            "WebSearch":  "Web search",
++            "WebFetch":   "Fetch",
++            "TodoWrite":  "Todo",
+             "Task":       "Agent",
+-            "LS":         "Liste",
+-            "MultiEdit":  "Modifie",
++            "LS":         "List",
++            "MultiEdit":  "Edit",
+             "NotebookEdit": "Notebook",
+         ]
+         let label = labels[tool] ?? tool
+@@ -563,11 +602,35 @@ final class HookServer: @unchecked Sendable {
          let pyURL = wrapperURL.deletingLastPathComponent().appendingPathComponent("nb-hook.py")
          try? nbHookPythonGitHub.write(to: pyURL, atomically: true, encoding: .utf8)
          _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: pyURL.path)
@@ -582,7 +630,7 @@ index 41b71c0..ad7aca9 100644
      /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
      static func hooksNeedUpdate() -> Bool {
          let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-@@ -681,6 +743,81 @@ final class HookServer: @unchecked Sendable {
+@@ -681,6 +744,81 @@ final class HookServer: @unchecked Sendable {
          try newData.write(to: settingsURL, options: .atomic)
      }
  
@@ -664,7 +712,7 @@ index 41b71c0..ad7aca9 100644
      // MARK: - App Store: hooks via security-scoped bookmark
  
      #if APPSTORE
-@@ -1394,3 +1531,83 @@ def main():
+@@ -1394,3 +1532,83 @@ def main():
  main()
  sys.exit(0)
  """
@@ -1485,3 +1533,18 @@ index 0000000..23bd881
 +        }.resume()
 +    }
 +}
+diff --git a/NotchBuddy/project.yml b/NotchBuddy/project.yml
+index e1041f6..0836c84 100644
+--- a/NotchBuddy/project.yml
++++ b/NotchBuddy/project.yml
+@@ -67,8 +67,8 @@ targets:
+         LSUIElement: YES
+         NSHighResolutionCapable: YES
+         NSSupportsAutomaticGraphicsSwitching: YES
+-        NSAppleEventsUsageDescription: "Pour sauter au terminal et envoyer des mails."
+-        NSAccessibilityUsageDescription: "Pour lire le titre de la fenêtre active et l'attacher comme contexte."
++        NSAppleEventsUsageDescription: "Coucou brings your terminal to the front and can send a dropped file by email."
++        NSAccessibilityUsageDescription: "Coucou reads the front window's title to attach it as chat context."
+     settings:
+       base:
+         PRODUCT_BUNDLE_IDENTIFIER: fr.louisraille.NotchBuddy
