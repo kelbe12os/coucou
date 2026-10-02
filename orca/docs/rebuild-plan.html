@@ -284,13 +284,13 @@ brew install xcodegen</code></pre>
 cd ~/Workspaces/Code/coucou && git checkout orca
 git remote add upstream https://github.com/Louis-CFM/coucou.git
 git log --oneline upstream/main..orca | head        <span class="c"># the fork's own commits</span></code></pre>
-    <p>Day to day you don't need this clone: <code>scripts/build.sh --install</code> in the fork clones the fork's <code>orca</code> branch into <code>build/coucou</code> and builds it. The clone above is where you merge upstream and commit new changes.</p>
+    <p>This is the only checkout you need: the app at the root, the tooling under <code>orca/</code>. <code>orca/scripts/build.sh --install</code> builds whatever branch is checked out.</p>
     <div class="expect">
       <span class="k">Audited at</span><span><code>8a5c263</code>. If the clone is newer and <code>--check</code> fails, the upstream lines moved. Apply the three edits by hand from the diff below. They're short.</span>
       <span class="k">Also read</span><span>If the clone is newer, skim <code>git diff 8a5c263 HEAD -- NotchBuddy/Sources/App/HookServer.swift</code> before building. That file owns the socket, the settings writer and approvals.</span>
     </div>
     <details>
-      <summary>the fork.patch, what it changes</summary>
+      <summary>What the fork changes in the app, by file</summary>
       <pre><code>NotchBuddy/Sources/App/HookServer.swift        | 18 ++++++----   accept Orca panes (allowlist), both gates
 NotchBuddy/Sources/App/IslandViewContent.swift | 35 ++++-------   Claude pill and "Open Orca" focus Orca; hooks status; model picker
 NotchBuddy/Sources/App/PillCatalog.swift       |  4 +-           slot named "Orca · Claude Code host"
