@@ -229,7 +229,7 @@ index 5144fc4..5a996c8 100644
          state.stateOverride = .error
          state.noteMessage = message
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
-index 41b71c0..d97655b 100644
+index 41b71c0..f5b0340 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
 +++ b/NotchBuddy/Sources/App/HookServer.swift
 @@ -176,9 +176,8 @@ final class HookServer: @unchecked Sendable {
@@ -250,8 +250,8 @@ index 41b71c0..d97655b 100644
  
 +    /// Terminals whose Claude Code sessions show in the island and get approval cards.
 +    /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
-+    /// bundle com.stablyai.orca). Add more tokens here to support other terminals.
-+    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca"]
++    /// bundle com.stablyai.orca) and Ghostty. Add more tokens here to support other terminals.
++    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca", "ghostty"]
 +
 +    static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
 +        let t = termProgram.lowercased(), b = bundleId.lowercased()
@@ -351,7 +351,7 @@ index 5200af8..8b46a88 100644
  
  // MARK: - View dimensions (from VIEWS in prototype)
 diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
-index c0e1ec3..32ba54a 100644
+index c0e1ec3..609696c 100644
 --- a/NotchBuddy/Sources/App/IslandViewContent.swift
 +++ b/NotchBuddy/Sources/App/IslandViewContent.swift
 @@ -123,11 +123,14 @@ struct OverviewView: View {
@@ -361,7 +361,7 @@ index c0e1ec3..32ba54a 100644
 -            let vscodeBundleId = "com.microsoft.VSCode"
 -            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == vscodeBundleId }) {
 +            // Jump to the app hosting the Claude Code session: Orca first, then VS Code.
-+            let hostBundleIds = ["com.stablyai.orca", "com.microsoft.VSCode"]
++            let hostBundleIds = ["com.stablyai.orca", "com.mitchellh.ghostty", "com.microsoft.VSCode"]
 +            if let app = hostBundleIds.compactMap({ id in
 +                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
 +            }).first {
@@ -438,7 +438,7 @@ index c0e1ec3..32ba54a 100644
 -        // No cwd: activate running instance or launch fresh
 +    /// Bring the app hosting Claude Code sessions to the front: Orca first, VS Code as fallback.
 +    private func openHost() {
-+        let ids = ["com.stablyai.orca", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
++        let ids = ["com.stablyai.orca", "com.mitchellh.ghostty", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
          if let running = ids.compactMap({ id in
              NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
          }).first {
