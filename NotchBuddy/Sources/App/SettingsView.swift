@@ -5,6 +5,8 @@ import AppKit
 struct SettingsView: View {
     @ObservedObject private var state = AppState.shared
     @State private var apiKey: String = KeychainStore.shared.get("anthropic-api-key") ?? ""
+    @State private var claudeCLIPath: String? = ClaudeCodeCLI.locate()
+    @State private var claudeCLIVersion: String = ""
 
     // Claude model — dynamic list fetched from the API, static fallback if unavailable
     private static let fallbackModels: [(id: String, label: String)] = [
@@ -79,12 +81,48 @@ struct SettingsView: View {
         )
     }
 
+    private func loadCLIVersion() {
+        Task { claudeCLIVersion = await ClaudeCodeCLI.version() ?? "" }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
 
                 // MARK: API
-                GroupBox("Anthropic API") {
+                GroupBox("Claude Code (local)") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Chat through your Claude Code login (claude -p). No API key needed.")
+                            .font(.system(size: 12)).foregroundColor(.secondary)
+                        HStack(spacing: 6) {
+                            Circle().fill(claudeCLIPath == nil ? Color(hex: "#F4505E") : Color(hex: "#22C55E"))
+                                .frame(width: 8, height: 8)
+                            if let p = claudeCLIPath {
+                                Text("Found: \(p)\(claudeCLIVersion.isEmpty ? "" : " · \(claudeCLIVersion)")")
+                                    .font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                            } else {
+                                Text("claude CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN.")
+                                    .font(.system(size: 11))
+                            }
+                        }
+                        Picker("Model", selection: $state.claudeCodeModel) {
+                            ForEach(ClaudeCodeCLI.modelChoices, id: \.id) { m in Text(m.label).tag(m.id) }
+                        }
+                        HStack(spacing: 8) {
+                            Button(state.chatProvider == .claudeCode ? "✓ Used for chat" : "Use Claude Code for chat") {
+                                state.chatProvider = .claudeCode
+                                statusMessage = "✓ Chat now uses Claude Code."
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(state.chatProvider == .claudeCode || claudeCLIPath == nil)
+                            Button("Re-detect") { claudeCLIPath = ClaudeCodeCLI.locate(); loadCLIVersion() }
+                        }
+                    }
+                    .padding(6)
+                }
+                .task { loadCLIVersion() }
+
+                GroupBox("Anthropic API (optional)") {
                     VStack(alignment: .leading, spacing: 8) {
                         SecureField("API key (sk-ant-…)", text: $apiKey)
                             .textFieldStyle(.roundedBorder)
@@ -116,7 +154,7 @@ struct SettingsView: View {
                                 .onChange(of: customModel) { _, value in applyCustomModel(value) }
                         }
 
-                        Text("Used by the chat. The list comes from your Anthropic account.")
+                        Text("Only needed if you prefer the API over your Claude Code login. The list comes from your Anthropic account.")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }

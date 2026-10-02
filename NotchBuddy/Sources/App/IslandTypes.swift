@@ -66,12 +66,14 @@ enum AgentSource: Equatable {
 // MARK: - Chat provider
 
 enum ChatProvider: String, CaseIterable, Codable {
+    case claudeCode = "claude-code"
     case anthropic = "anthropic"
     case google    = "google"
     case openai    = "openai"
 
     var displayName: String {
         switch self {
+        case .claudeCode: "Claude Code"
         case .anthropic: "Anthropic"
         case .google:    "Google"
         case .openai:    "OpenAI"
@@ -80,6 +82,7 @@ enum ChatProvider: String, CaseIterable, Codable {
 
     var accentHex: String {
         switch self {
+        case .claudeCode: "#E0A030"
         case .anthropic: "#E07950"
         case .google:    "#4285F4"
         case .openai:    "#10A37F"
@@ -88,6 +91,7 @@ enum ChatProvider: String, CaseIterable, Codable {
 
     var defaultModel: String {
         switch self {
+        case .claudeCode: "default"
         case .anthropic: "claude-sonnet-4-6"
         case .google:    "gemini-2.0-flash"
         case .openai:    "gpt-4o"
@@ -96,6 +100,7 @@ enum ChatProvider: String, CaseIterable, Codable {
 
     var keychainKey: String {
         switch self {
+        case .claudeCode: ""
         case .anthropic: "anthropic-api-key"
         case .google:    "google-api-key"
         case .openai:    "openai-api-key"

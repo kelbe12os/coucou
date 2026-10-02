@@ -186,8 +186,12 @@ final class ClaudeService {
     // Multi-turn conversation messages (for API)
     private var conversationMessages: [[String: Any]] = []
 
+    // Claude Code CLI session id for multi-turn chat (resume)
+    private var claudeCodeSessionId: String?
+
     func clearConversation() {
         conversationMessages = []
+        claudeCodeSessionId = nil
     }
 
     private let systemPrompt = """
@@ -197,6 +201,46 @@ final class ClaudeService {
     No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.
     """
 
+    private func chatViaClaudeCode(query: String, context: PromptContext?, state: AppState) async {
+        var prompt = query
+        var addDirs: [String] = []
+        var cwd: String? = nil
+        if claudeCodeSessionId == nil, let context {
+            switch context {
+            case .window(let app, let title, let url):
+                var text = "Context — App: \(app), Window: \(title)"
+                if let url { text += ", URL: \(url)" }
+                prompt = text + "\n\n" + query
+            case .file(let name, let fileURL):
+                if let fileURL {
+                    let dir = fileURL.deletingLastPathComponent().path
+                    addDirs = [dir]; cwd = dir
+                    prompt = "Read the file at \(fileURL.path) with the Read tool first.\nFile: \(name)\n\n" + query
+                } else {
+                    prompt = "File: \(name)\n\n" + query
+                }
+            }
+        }
+        do {
+            let out = try await ClaudeCodeCLI.run(prompt: prompt, systemPrompt: systemPrompt,
+                                                  model: state.claudeCodeModel,
+                                                  resumeSessionId: claudeCodeSessionId,
+                                                  addDirs: addDirs, cwd: cwd)
+            if out.isError {
+                await showError("Claude Code: \(out.text.isEmpty ? "request failed" : out.text)", state: state)
+                return
+            }
+            if let sid = out.sessionId, !sid.isEmpty { claudeCodeSessionId = sid }
+            guard !out.text.isEmpty else { await showError("No response text.", state: state); return }
+            state.chatHistory.append(ChatMessage(role: .assistant, content: out.text))
+            state.stateOverride = nil
+            state.view = .prompt
+            NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
+        } catch {
+            await showError("Claude Code: \(error.localizedDescription)", state: state)
+        }
+    }
+
     private let webSearchTools: [[String: Any]] = [
         ["type": "web_search_20250305", "name": "web_search", "max_uses": 5]
     ]
@@ -204,6 +248,10 @@ final class ClaudeService {
     // MARK: - Chat (multi-turn, natural text + web search)
 
     func chat(query: String, context: PromptContext?, state: AppState) async {
+        if state.chatProvider == .claudeCode {
+            await chatViaClaudeCode(query: query, context: context, state: state)
+            return
+        }
         guard state.chatProvider == .anthropic else {
             await chatOpenAICompatible(query: query, context: context, state: state)
             return
@@ -266,6 +314,7 @@ final class ClaudeService {
         case .google:  baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         case .openai:  baseURL = "https://api.openai.com/v1/chat/completions"
         case .anthropic: return
+        case .claudeCode: return
         }
         guard let url = URL(string: baseURL) else { return }
 
@@ -340,6 +389,10 @@ final class ClaudeService {
     // MARK: - Structured search (M8 — window attach + web search)
 
     func search(query: String, context: PromptContext?, state: AppState) async {
+        if state.chatProvider == .claudeCode {
+            await searchViaClaudeCode(query: query, context: context, state: state)
+            return
+        }
         guard let key = apiKey, !key.isEmpty else {
             await showError("Anthropic API key missing. Open settings to configure it.", state: state)
             return
@@ -460,7 +513,10 @@ final class ClaudeService {
             await showError("Unexpected API response.", state: state)
             return
         }
+        await handleResultText(text, state: state)
+    }
 
+    private func handleResultText(_ text: String, state: AppState) async {
         // Strip markdown code fences if present, then extract JSON object
         let cleanText: String
         if let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}") {
@@ -498,6 +554,43 @@ final class ClaudeService {
         state.stateOverride = nil
         state.view = .result
         NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.proud)
+    }
+
+    private func searchViaClaudeCode(query: String, context: PromptContext?, state: AppState) async {
+        var prompt: String
+        var addDirs: [String] = []
+        var cwd: String? = nil
+        switch context {
+        case .window(let appName, let title, let url):
+            prompt = "App: \(appName)\nWindow title: \(title)"
+            if let url { prompt += "\nURL: \(url)" }
+            prompt += "\n\nRequest: \(query)"
+        case .file(let name, let fileURL):
+            if let fileURL {
+                let dir = fileURL.deletingLastPathComponent().path
+                addDirs = [dir]; cwd = dir
+                prompt = "Read the file at \(fileURL.path) with the Read tool first.\nFile: \(name)\n\nRequest: \(query)"
+            } else {
+                prompt = "File: \(name)\n\nRequest: \(query)"
+            }
+        case nil:
+            prompt = query
+        }
+        let system = """
+        You are an assistant built into the notch of a Mac. Reply in English, short and precise.
+        Reply ONLY with valid JSON in this exact format:
+        {"title":"...","items":[{"label":"...","detail":"...","url":"..."}],"note":"..."}
+        Maximum 3 items. "url" is optional. "note" is optional.
+        """
+        do {
+            let out = try await ClaudeCodeCLI.run(prompt: prompt, systemPrompt: system,
+                                                  model: state.claudeCodeModel, resumeSessionId: nil,
+                                                  addDirs: addDirs, cwd: cwd)
+            if out.isError { await showError("Claude Code: \(out.text)", state: state); return }
+            await handleResultText(out.text, state: state)
+        } catch {
+            await showError("Claude Code: \(error.localizedDescription)", state: state)
+        }
     }
 
     private func showError(_ message: String, state: AppState) async {

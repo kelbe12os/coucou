@@ -957,6 +957,7 @@ struct ModelPickerView: View {
                     ForEach(models, id: \.id) { model in
                         Button {
                             switch state.chatProvider {
+                            case .claudeCode: state.claudeCodeModel = model.id
                             case .anthropic: state.claudeModel = model.id
                             case .google:    state.googleChatModel = model.id
                             case .openai:    state.openAIChatModel = model.id

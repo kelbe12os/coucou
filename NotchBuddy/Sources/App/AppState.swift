@@ -60,7 +60,7 @@ final class AppState: ObservableObject {
     }
 
     // In-chat provider + model — picked via the model selector in the prompt view
-    @Published var chatProvider: ChatProvider = .anthropic {
+    @Published var chatProvider: ChatProvider = .claudeCode {
         didSet { UserDefaults.standard.set(chatProvider.rawValue, forKey: "chatProvider") }
     }
     @Published var googleChatModel: String = ChatProvider.google.defaultModel {
@@ -68,6 +68,9 @@ final class AppState: ObservableObject {
     }
     @Published var openAIChatModel: String = ChatProvider.openai.defaultModel {
         didSet { UserDefaults.standard.set(openAIChatModel, forKey: "openAIChatModel") }
+    }
+    @Published var claudeCodeModel: String = ChatProvider.claudeCode.defaultModel {
+        didSet { UserDefaults.standard.set(claudeCodeModel, forKey: "claudeCodeModel") }
     }
 
     // The always-on workspace pill (default: VS Code). Persisted.
@@ -83,6 +86,15 @@ final class AppState: ObservableObject {
     /// Fetches models for `provider` if not already loaded or loading.
     /// Sets `providerModelFetchError` if the key is absent or the request fails.
     func fetchModelsIfNeeded(for provider: ChatProvider) {
+        if provider == .claudeCode {
+            if ClaudeCodeCLI.locate() == nil {
+                providerModelFetchError[provider] = "Claude Code CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN."
+            } else {
+                providerModelFetchError.removeValue(forKey: provider)
+                fetchedProviderModels[provider] = ClaudeCodeCLI.modelChoices
+            }
+            return
+        }
         guard !loadingProviderModels.contains(provider),
               fetchedProviderModels[provider] == nil else { return }
         guard let apiKey = KeychainStore.shared.get(provider.keychainKey), !apiKey.isEmpty else {
@@ -94,6 +106,7 @@ final class AppState: ObservableObject {
         Task {
             let models: [(id: String, label: String)]
             switch provider {
+            case .claudeCode: models = []
             case .anthropic: models = await ClaudeService.fetchModels(apiKey: apiKey)
             case .google:    models = await ClaudeService.fetchGoogleModels(apiKey: apiKey)
             case .openai:    models = await ClaudeService.fetchOpenAIModels(apiKey: apiKey)
@@ -106,6 +119,7 @@ final class AppState: ObservableObject {
                 // If the saved model isn't in the fetched list, pick a sensible default:
                 // prefer "sonnet" (Anthropic), "flash" (Google), "mini" (OpenAI); else first.
                 switch provider {
+                case .claudeCode: break
                 case .anthropic:
                     if !models.contains(where: { $0.id == claudeModel }) {
                         claudeModel = models.first(where: { $0.id.contains("sonnet") })?.id ?? models.first!.id
@@ -126,6 +140,7 @@ final class AppState: ObservableObject {
     /// The model currently active for chat (provider-aware).
     var activeChatModel: String {
         switch chatProvider {
+        case .claudeCode: return claudeCodeModel
         case .anthropic: return claudeModel
         case .google:    return googleChatModel
         case .openai:    return openAIChatModel
@@ -252,6 +267,7 @@ final class AppState: ObservableObject {
         if let v = ud.string(forKey: "chatProvider"), let p = ChatProvider(rawValue: v) { chatProvider = p }
         if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
         if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
+        if let v = ud.string(forKey: "claudeCodeModel"), !v.isEmpty { claudeCodeModel = v }
         // Migrate old 60s default → 15s
         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
             autoCloseInterval = (v == 60) ? 15 : v
