@@ -1,0 +1,65 @@
+diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
+index 41b71c0..973f0a7 100644
+--- a/NotchBuddy/Sources/App/HookServer.swift
++++ b/NotchBuddy/Sources/App/HookServer.swift
+@@ -176,9 +176,8 @@ final class HookServer: @unchecked Sendable {
+ 
+         let termProgram = payload["term_program"] as? String ?? ""
+         let bundleId    = payload["bundle_id"]    as? String ?? ""
+-        let isVSCode = termProgram.lowercased().contains("vscode") ||
+-                       bundleId.lowercased().contains("vscode")
+-        // External agents bypass the VS Code filter (their relay runs in any terminal).
++        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
++        // External agents bypass the terminal filter (their relay runs in any terminal).
+         guard isExternalAgent || isVSCode else {
+             nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
+             return
+@@ -339,6 +338,16 @@ final class HookServer: @unchecked Sendable {
+         // Already compact and non-alert: Mochi state update is enough, no expand
+     }
+ 
++    /// Terminals whose Claude Code sessions show in the island and get approval cards.
++    /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
++    /// bundle com.stablyai.orca). Add more tokens here to support other terminals.
++    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca"]
++
++    static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
++        let t = termProgram.lowercased(), b = bundleId.lowercased()
++        return supportedTerminalTokens.contains { t.contains($0) || b.contains($0) }
++    }
++
+     // MARK: - Permission request (blocking — Claude Code waits for decision)
+ 
+     @MainActor
+@@ -364,8 +373,7 @@ final class HookServer: @unchecked Sendable {
+ 
+         let termProgram = payload["term_program"] as? String ?? ""
+         let bundleId    = payload["bundle_id"]    as? String ?? ""
+-        let isVSCode = termProgram.lowercased().contains("vscode") ||
+-                       bundleId.lowercased().contains("vscode")
++        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
+         guard isVSCode else {
+             Task.detached { [weak self] in
+                 self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
+index c0e1ec3..381758c 100644
+--- a/NotchBuddy/Sources/App/IslandViewContent.swift
++++ b/NotchBuddy/Sources/App/IslandViewContent.swift
+@@ -123,11 +123,14 @@ struct OverviewView: View {
+         guard let task else { return }
+         switch task.id {
+         case "integration_claude":
+-            let vscodeBundleId = "com.microsoft.VSCode"
+-            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == vscodeBundleId }) {
++            // Jump to the app hosting the Claude Code session: Orca first, then VS Code.
++            let hostBundleIds = ["com.stablyai.orca", "com.microsoft.VSCode"]
++            if let app = hostBundleIds.compactMap({ id in
++                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
++            }).first {
+                 app.activate(options: .activateIgnoringOtherApps)
+             } else {
+-                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Visual Studio Code.app"))
++                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Orca.app"))
+             }
+         case "integration_resend":
+             NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)

@@ -1,0 +1,615 @@
+<title>Coucou Rebuild Plan</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#F6F7F9;
+  --panel:#FFFFFF;
+  --ink:#1C2230;
+  --ink-2:#4A5467;
+  --ink-3:#7C8699;
+  --rule:#DCE1E8;
+  --code-bg:#EEF1F5;
+  --code-ink:#1C2230;
+  --accent:#B8720A;
+  --accent-soft:#FBF1DD;
+  --ok:#2E7D4F;
+  --ok-soft:#E3F2E9;
+  --bad:#B4382E;
+  --bad-soft:#F9E5E3;
+  --sans:"IBM Plex Sans",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#13171F;
+    --panel:#1A2029;
+    --ink:#E7EBF1;
+    --ink-2:#B3BCCA;
+    --ink-3:#7F8A9B;
+    --rule:#2B3340;
+    --code-bg:#0F1319;
+    --code-ink:#DDE3EC;
+    --accent:#F0B24A;
+    --accent-soft:#2E2512;
+    --ok:#6CC594;
+    --ok-soft:#15291E;
+    --bad:#F08A80;
+    --bad-soft:#331B19;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#13171F;
+  --panel:#1A2029;
+  --ink:#E7EBF1;
+  --ink-2:#B3BCCA;
+  --ink-3:#7F8A9B;
+  --rule:#2B3340;
+  --code-bg:#0F1319;
+  --code-ink:#DDE3EC;
+  --accent:#F0B24A;
+  --accent-soft:#2E2512;
+  --ok:#6CC594;
+  --ok-soft:#15291E;
+  --bad:#F08A80;
+  --bad-soft:#331B19;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:var(--sans);font-size:15.5px;line-height:1.55;
+  padding-inline:16px;padding-block:0 64px;
+}
+.wrap{max-width:1040px;margin:0 auto}
+header.top{padding-block:40px 28px;border-bottom:1px solid var(--rule)}
+.eyebrow{
+  font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 10px;
+}
+h1{
+  font-size:clamp(28px,4vw,38px);line-height:1.12;font-weight:600;margin:0 0 12px;
+  letter-spacing:-.01em;text-wrap:balance;
+}
+.lede{font-size:17px;color:var(--ink-2);max-width:62ch;margin:0}
+.meta{
+  display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:18px;
+  font-family:var(--mono);font-size:12.5px;color:var(--ink-3);
+}
+.meta b{color:var(--ink-2);font-weight:500}
+
+.scope{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;
+  margin-top:22px;
+}
+.scope div{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;font-size:14px}
+.scope h3{margin:0 0 6px;font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:500;color:var(--ink-3)}
+.scope.in h3{color:var(--ok)}
+.scope ul{margin:0;padding-left:18px;color:var(--ink-2)}
+.scope li{margin:2px 0}
+
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;padding-top:32px}
+@media (max-width:820px){.layout{grid-template-columns:1fr;gap:24px}}
+
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;padding-top:8px}
+@media (max-width:820px){nav.toc{position:static}}
+nav.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+nav.toc a{
+  display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:baseline;
+  padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--ink-2);font-size:14px;
+}
+nav.toc a:hover,nav.toc a:focus-visible{background:var(--panel);color:var(--ink);outline:none}
+nav.toc .n{font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+@media (max-width:820px){
+  nav.toc ol{flex-direction:row;flex-wrap:wrap;gap:6px}
+  nav.toc a{display:inline-flex;gap:6px;border:1px solid var(--rule);background:var(--panel);padding:4px 10px;font-size:13px}
+}
+
+main{min-width:0;display:flex;flex-direction:column;gap:44px}
+section{scroll-margin-top:16px}
+.step-head{display:grid;grid-template-columns:44px 1fr;gap:14px;align-items:start;margin-bottom:14px}
+.step-num{
+  font-family:var(--mono);font-size:13px;color:var(--accent);
+  border:1px solid var(--accent);border-radius:4px;height:28px;width:44px;
+  display:grid;place-items:center;margin-top:3px;
+}
+h2{font-size:22px;font-weight:600;margin:0;line-height:1.25;text-wrap:balance}
+.goal{color:var(--ink-3);font-size:14px;margin:4px 0 0}
+.body{padding-left:58px;display:flex;flex-direction:column;gap:14px}
+@media (max-width:820px){.body{padding-left:0}}
+p{margin:0;max-width:66ch}
+ul,ol.plain{margin:0;padding-left:20px;max-width:66ch}
+li{margin:4px 0}
+li::marker{color:var(--ink-3)}
+
+pre{
+  position:relative;margin:0;background:var(--code-bg);color:var(--code-ink);
+  border:1px solid var(--rule);border-radius:6px;padding:14px 16px;
+  font-family:var(--mono);font-size:13px;line-height:1.55;overflow-x:auto;tab-size:2;
+}
+pre .c{color:var(--ink-3)}
+pre .add{color:var(--ok)}
+pre .del{color:var(--bad)}
+code{font-family:var(--mono);font-size:.92em;background:var(--code-bg);padding:1px 5px;border-radius:4px}
+pre code{background:none;padding:0;font-size:inherit}
+.copy{
+  position:absolute;top:8px;right:8px;font-family:var(--mono);font-size:11px;
+  color:var(--ink-3);background:var(--panel);border:1px solid var(--rule);border-radius:4px;
+  padding:3px 8px;cursor:pointer;
+}
+.copy:hover,.copy:focus-visible{color:var(--ink);outline:none;border-color:var(--ink-3)}
+.copy[data-done="1"]{color:var(--ok);border-color:var(--ok)}
+
+.expect{
+  display:grid;grid-template-columns:auto 1fr;gap:6px 14px;
+  font-size:14px;border-left:2px solid var(--rule);padding-left:14px;max-width:66ch;
+}
+.expect .k{font-family:var(--mono);font-size:12px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.06em;padding-top:2px}
+
+.callout{
+  background:var(--accent-soft);border-left:3px solid var(--accent);
+  padding:12px 16px;border-radius:0 6px 6px 0;font-size:14.5px;max-width:70ch;
+}
+.callout b{font-weight:600}
+
+table{border-collapse:collapse;width:100%;font-size:14px}
+.tbl{overflow-x:auto;border:1px solid var(--rule);border-radius:6px;background:var(--panel)}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+tr:last-child td{border-bottom:none}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:500}
+.pill{
+  display:inline-block;font-family:var(--mono);font-size:11.5px;padding:1px 8px;border-radius:999px;
+  border:1px solid transparent;white-space:nowrap;
+}
+.pill.bad{color:var(--bad);background:var(--bad-soft)}
+.pill.ok{color:var(--ok);background:var(--ok-soft)}
+
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.rule-card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:14px 16px}
+.rule-card h3{font-size:14.5px;font-weight:600;margin:0 0 6px}
+.rule-card p{font-size:14px;color:var(--ink-2)}
+
+details{border:1px solid var(--rule);border-radius:6px;background:var(--panel)}
+summary{cursor:pointer;padding:10px 14px;font-size:14px;font-weight:500;color:var(--ink-2)}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+details pre{border:none;border-top:1px solid var(--rule);border-radius:0 0 6px 6px}
+
+footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-3);max-width:70ch}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">Build from source · macOS · Orca + Claude Code only</p>
+  <h1>Coucou Rebuild Plan</h1>
+  <p class="lede">Build Coucou from audited source with a three-site patch so it recognises Claude Code sessions running in Orca panes. Nothing else gets configured.</p>
+  <div class="meta">
+    <span>repo <b>github.com/Louis-CFM/coucou</b></span>
+    <span>audited <b>2026-10-02</b> at <b>8a5c263</b></span>
+    <span>host <b>Orca 1.4.218 · com.stablyai.orca</b></span>
+    <span>patch <b>~/Desktop/coucou-orca.patch</b></span>
+    <span>pi extension <b>~/Desktop/coucou-status.ts</b></span>
+  </div>
+  <div class="scope-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:22px">
+    <div class="scope in" style="display:block"><h3>In scope</h3><ul>
+      <li>Claude Code sessions launched inside Orca panes</li>
+      <li>Session status in the notch</li>
+      <li>Allow / Deny for Bash from the notch</li>
+      <li>Jump to Orca from the Claude pill</li>
+      <li>pi workers Orca dispatches: one pill per brief, with phase, note, report and worker_done milestones</li>
+    </ul></div>
+    <div class="scope" style="display:block"><h3>Left out on purpose</h3><ul>
+      <li>Gemini CLI and Antigravity hooks</li>
+      <li>Chat, so no Anthropic, OpenAI or Google keys</li>
+      <li>Stripe, n8n, GitHub, Vercel, Resend, Notion, Cal.com</li>
+      <li>Accessibility and browser automation</li>
+      <li>pi approvals from the notch. Coucou answers "ask" for every non-Claude agent, so those stay in the pane</li>
+    </ul></div>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="Steps">
+  <ol>
+    <li><a href="#why"><span class="n">00</span><span>Why a patched build</span></a></li>
+    <li><a href="#prereq"><span class="n">01</span><span>Prerequisites</span></a></li>
+    <li><a href="#source"><span class="n">02</span><span>Source and patch</span></a></li>
+    <li><a href="#build"><span class="n">03</span><span>Build</span></a></li>
+    <li><a href="#install"><span class="n">04</span><span>Sign and install</span></a></li>
+    <li><a href="#verify"><span class="n">05</span><span>Verify</span></a></li>
+    <li><a href="#launch"><span class="n">06</span><span>First launch</span></a></li>
+    <li><a href="#hooks"><span class="n">07</span><span>Install hooks</span></a></li>
+    <li><a href="#pi"><span class="n">08</span><span>pi extension</span></a></li>
+    <li><a href="#operate"><span class="n">09</span><span>Operating rules</span></a></li>
+    <li><a href="#update"><span class="n">10</span><span>Updating</span></a></li>
+    <li><a href="#rollback"><span class="n">11</span><span>Rollback</span></a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="why">
+  <div class="step-head">
+    <div class="step-num">00</div>
+    <div><h2>Why a patched build, not the zip</h2><p class="goal">Two separate problems: the published binary, and a hard-coded VS Code filter.</p></div>
+  </div>
+  <div class="body">
+    <p><b>The binary.</b> The v0.1.0 zip on the Releases page is ad-hoc signed with no Team ID, not notarized, has a broken seal from stray <code>._</code> files, and was built on the author's laptop with no CI provenance. It also predates the socket-permission and logging fixes already on <code>main</code>.</p>
+    <p><b>The filter.</b> Upstream Coucou drops every Claude Code event unless the session's <code>TERM_PROGRAM</code> or bundle id contains "vscode". Orca panes report <code>TERM_PROGRAM=Orca</code> and bundle <code>com.stablyai.orca</code>. Unpatched, Coucou would show nothing for any of your sessions and log each event as ignored.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Behaviour</th><th>Zip v0.1.0</th><th>main, unpatched</th><th>main + Orca patch</th></tr></thead>
+      <tbody>
+        <tr><td>Signature you can trust</td><td><span class="pill bad">no</span></td><td><span class="pill ok">yes</span></td><td><span class="pill ok">yes</span></td></tr>
+        <tr><td>Socket 0600, logs without commands</td><td><span class="pill bad">no</span></td><td><span class="pill ok">yes</span></td><td><span class="pill ok">yes</span></td></tr>
+        <tr><td>Orca sessions appear in the notch</td><td><span class="pill bad">ignored</span></td><td><span class="pill bad">ignored</span></td><td><span class="pill ok">yes</span></td></tr>
+        <tr><td>Approval card for Orca sessions</td><td><span class="pill bad">no</span></td><td><span class="pill bad">no</span></td><td><span class="pill ok">yes</span></td></tr>
+        <tr><td>Click pill → focuses</td><td>VS Code</td><td>VS Code</td><td><span class="pill ok">Orca</span></td></tr>
+      </tbody>
+    </table></div>
+    <p>The patch changes 19 lines across two files. It replaces the two VS Code checks with a small allowlist that includes Orca, and makes the Claude pill focus Orca instead of VS Code. The full diff is in step 02.</p>
+  </div>
+</section>
+
+<section id="prereq">
+  <div class="step-head">
+    <div class="step-num">01</div>
+    <div><h2>Prerequisites</h2><p class="goal">This Mac has only the Command Line Tools today. Full Xcode is required.</p></div>
+  </div>
+  <div class="body">
+    <p>The project is generated by XcodeGen and built with <code>xcodebuild</code>, which the Command Line Tools don't include. Checked on 2026-10-02: the active developer directory is <code>/Library/Developer/CommandLineTools</code> and <code>xcodegen</code> is not installed.</p>
+    <ol class="plain">
+      <li>Install Xcode from the Mac App Store. It's a multi-gigabyte download. Open it once afterwards so it finishes installing its components.</li>
+      <li>Point the command-line tools at it and accept the license.</li>
+    </ol>
+    <pre><button class="copy" type="button">copy</button><code>sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept
+xcodebuild -version        <span class="c"># want: Xcode 16 or later</span>
+brew install xcodegen</code></pre>
+    <div class="callout"><b>Python 3 is already present.</b> The hook relay Coucou installs is a Python script run with <code>/usr/bin/python3</code>, which the Command Line Tools provide. No extra install.</div>
+  </div>
+</section>
+
+<section id="source">
+  <div class="step-head">
+    <div class="step-num">02</div>
+    <div><h2>Get the source and apply the Orca patch</h2><p class="goal">Clone, branch, apply, commit. The patch has been verified to apply cleanly at 8a5c263.</p></div>
+  </div>
+  <div class="body">
+    <pre><button class="copy" type="button">copy</button><code>mkdir -p ~/src && cd ~/src
+git clone https://github.com/Louis-CFM/coucou.git
+cd coucou
+git log -1 --format='%h  %ad  %s' --date=short
+git checkout -b orca
+git apply --check ~/Desktop/coucou-orca.patch && git apply ~/Desktop/coucou-orca.patch
+git commit -am "Accept Orca panes as a Claude Code host; focus Orca from the Claude pill"</code></pre>
+    <div class="expect">
+      <span class="k">Audited at</span><span><code>8a5c263</code>. If the clone is newer and <code>--check</code> fails, the upstream lines moved. Apply the three edits by hand from the diff below. They're short.</span>
+      <span class="k">Also read</span><span>If the clone is newer, skim <code>git diff 8a5c263 HEAD -- NotchBuddy/Sources/App/HookServer.swift</code> before building. That file owns the socket, the settings writer and approvals.</span>
+    </div>
+    <details>
+      <summary>coucou-orca.patch, full diff</summary>
+      <pre><button class="copy" type="button">copy</button><code>diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
+--- a/NotchBuddy/Sources/App/HookServer.swift
++++ b/NotchBuddy/Sources/App/HookServer.swift
+@@ -176,9 +176,8 @@ final class HookServer: @unchecked Sendable {
+
+         let termProgram = payload["term_program"] as? String ?? ""
+         let bundleId    = payload["bundle_id"]    as? String ?? ""
+<span class="del">-        let isVSCode = termProgram.lowercased().contains("vscode") ||
+-                       bundleId.lowercased().contains("vscode")
+-        // External agents bypass the VS Code filter (their relay runs in any terminal).</span>
+<span class="add">+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
++        // External agents bypass the terminal filter (their relay runs in any terminal).</span>
+         guard isExternalAgent || isVSCode else {
+             nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
+             return
+@@ -339,6 +338,16 @@ final class HookServer: @unchecked Sendable {
+         // Already compact and non-alert: Mochi state update is enough, no expand
+     }
+
+<span class="add">+    /// Terminals whose Claude Code sessions show in the island and get approval cards.
++    /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
++    /// bundle com.stablyai.orca). Add more tokens here to support other terminals.
++    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca"]
++
++    static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
++        let t = termProgram.lowercased(), b = bundleId.lowercased()
++        return supportedTerminalTokens.contains { t.contains($0) || b.contains($0) }
++    }
++</span>
+     // MARK: - Permission request (blocking — Claude Code waits for decision)
+
+     @MainActor
+@@ -364,8 +373,7 @@ final class HookServer: @unchecked Sendable {
+
+         let termProgram = payload["term_program"] as? String ?? ""
+         let bundleId    = payload["bundle_id"]    as? String ?? ""
+<span class="del">-        let isVSCode = termProgram.lowercased().contains("vscode") ||
+-                       bundleId.lowercased().contains("vscode")</span>
+<span class="add">+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)</span>
+         guard isVSCode else {
+             Task.detached { [weak self] in
+                 self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
+--- a/NotchBuddy/Sources/App/IslandViewContent.swift
++++ b/NotchBuddy/Sources/App/IslandViewContent.swift
+@@ -123,11 +123,14 @@ struct OverviewView: View {
+         guard let task else { return }
+         switch task.id {
+         case "integration_claude":
+<span class="del">-            let vscodeBundleId = "com.microsoft.VSCode"
+-            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == vscodeBundleId }) {</span>
+<span class="add">+            // Jump to the app hosting the Claude Code session: Orca first, then VS Code.
++            let hostBundleIds = ["com.stablyai.orca", "com.microsoft.VSCode"]
++            if let app = hostBundleIds.compactMap({ id in
++                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
++            }).first {</span>
+                 app.activate(options: .activateIgnoringOtherApps)
+             } else {
+<span class="del">-                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Visual Studio Code.app"))</span>
+<span class="add">+                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Orca.app"))</span>
+             }
+         case "integration_resend":
+             NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)</code></pre>
+    </details>
+    <p>Want sessions from a plain terminal too? Add its <code>TERM_PROGRAM</code> value to the allowlist, for example <code>"ghostty"</code>. That's the only place to change.</p>
+  </div>
+</section>
+
+<section id="build">
+  <div class="step-head">
+    <div class="step-num">03</div>
+    <div><h2>Generate the project and build</h2><p class="goal">Release configuration with signing disabled, the same invocation as the repo's CI check.</p></div>
+  </div>
+  <div class="body">
+    <pre><button class="copy" type="button">copy</button><code>cd ~/src/coucou/NotchBuddy
+xcodegen
+xcodebuild \
+  -project NotchBuddy.xcodeproj \
+  -scheme NotchBuddy \
+  -configuration Release \
+  -derivedDataPath build \
+  build \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO</code></pre>
+    <div class="expect">
+      <span class="k">Takes</span><span>Two to four minutes the first time. Ends with <code>** BUILD SUCCEEDED **</code>.</span>
+      <span class="k">Output</span><span><code>build/Build/Products/Release/Coucou.app</code></span>
+      <span class="k">Patch note</span><span>The patch was syntax-checked but not compiled, since this Mac has no Xcode yet. If the compiler objects, the error will name one of the two patched files and the fix will be local to those lines.</span>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="step-head">
+    <div class="step-num">04</div>
+    <div><h2>Sign and install</h2><p class="goal">Ad-hoc sign it yourself and copy it into Applications.</p></div>
+  </div>
+  <div class="body">
+    <p>An ad-hoc signature is enough for an app you built on the machine that runs it. The file never carries a quarantine flag, so Gatekeeper won't show the "unverified developer" dialog the README warns about.</p>
+    <pre><button class="copy" type="button">copy</button><code>APP=~/src/coucou/NotchBuddy/build/Build/Products/Release/Coucou.app
+codesign --force --deep --sign - "$APP"
+rm -rf /Applications/Coucou.app
+ditto "$APP" /Applications/Coucou.app</code></pre>
+  </div>
+</section>
+
+<section id="verify">
+  <div class="step-head">
+    <div class="step-num">05</div>
+    <div><h2>Verify what you built</h2><p class="goal">Signature, baked-in hosts, and that the Orca tokens made it into the binary.</p></div>
+  </div>
+  <div class="body">
+    <pre><button class="copy" type="button">copy</button><code><span class="c"># 1. Signature is yours and the seal is intact</span>
+codesign --verify --strict -v /Applications/Coucou.app
+codesign -dv /Applications/Coucou.app 2>&amp;1 | grep -E 'Identifier|flags'
+
+<span class="c"># 2. Only vendor API hosts are compiled in</span>
+strings -n 8 /Applications/Coucou.app/Contents/MacOS/Coucou \
+  | grep -oE 'https?://[A-Za-z0-9./_-]+' | sort -u
+
+<span class="c"># 3. The Orca allowlist is present</span>
+strings -n 6 /Applications/Coucou.app/Contents/MacOS/Coucou | grep -c 'com.stablyai.orca'</code></pre>
+    <div class="expect">
+      <span class="k">Check 1</span><span><code>valid on disk</code>, identifier <code>fr.louisraille.NotchBuddy</code>, flags containing <code>adhoc</code>.</span>
+      <span class="k">Check 2</span><span>Only anthropic.com, openai.com, googleapis.com, github.com, vercel.com, stripe.com, resend.com, notion.com, notion.so and cal.com. These are compiled in whether or not you use the features.</span>
+      <span class="k">Check 3</span><span>At least 1. Zero means the unpatched source was built.</span>
+    </div>
+  </div>
+</section>
+
+<section id="launch">
+  <div class="step-head">
+    <div class="step-num">06</div>
+    <div><h2>First launch</h2><p class="goal">One permission is worth granting. Decline the rest.</p></div>
+  </div>
+  <div class="body">
+    <p>Open Coucou from Applications. It shows a menu-bar icon and the character greets you from the notch. Nothing is wired yet.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Prompt</th><th>What it does here</th><th>Decision</th></tr></thead>
+      <tbody>
+        <tr><td>Automation → Orca</td><td>Clicking the Claude pill brings Orca to the front.</td><td><span class="pill ok">Allow</span> when asked</td></tr>
+        <tr><td>Accessibility</td><td>Window-title capture for chat, plus the Escape and hotkey listeners.</td><td><span class="pill bad">Decline</span>. Chat is out of scope.</td></tr>
+        <tr><td>Automation → Safari, Chrome, Arc</td><td>Reads the current tab URL for chat context.</td><td><span class="pill bad">Decline</span></td></tr>
+        <tr><td>Automation → Mail</td><td>Emails a dropped file.</td><td><span class="pill bad">Decline</span></td></tr>
+      </tbody>
+    </table></div>
+    <p>Then confirm the socket and directories are owner-only. This is the runtime half of the security fixes you rebuilt for.</p>
+    <pre><button class="copy" type="button">copy</button><code>ls -l ~/Library/Application\ Support/NotchBuddy/nb.sock
+<span class="c"># want: srw-------</span>
+ls -ld ~/Library/Application\ Support/NotchBuddy ~/Library/Logs/NotchBuddy
+<span class="c"># want: drwx------ on both</span></code></pre>
+    <p>In Settings → Active pills, leave the defaults. Don't open the Gemini CLI or Antigravity sections, and don't enter any API keys.</p>
+  </div>
+</section>
+
+<section id="hooks">
+  <div class="step-head">
+    <div class="step-num">07</div>
+    <div><h2>Install the Claude Code hooks</h2><p class="goal">Orca already owns 13 hook events in your settings. Coucou adds 12 alongside them without conflict.</p></div>
+  </div>
+  <div class="body">
+    <p>Checked on this Mac: every existing hook in <code>~/.claude/settings.json</code> is Orca's relay. Its PermissionRequest hook prints an empty object and only notifies Orca. It never returns an allow or deny. So Coucou is the only hook that will ever answer a permission request, and only when you click a button in the notch.</p>
+    <p>Take your own backup, then install from the app.</p>
+    <pre><button class="copy" type="button">copy</button><code>cp ~/.claude/settings.json ~/.claude/settings.json.pre-coucou</code></pre>
+    <p>Menu-bar icon → Settings… → Claude Code → <b>Install hooks</b>. Read the diff before confirming. You should see:</p>
+    <ul>
+      <li>One new entry appended under 12 events: SessionStart, SessionEnd, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest, Notification, Stop, StopFailure, SubagentStart, SubagentStop.</li>
+      <li>Each pointing at <code>~/Library/Application Support/NotchBuddy/nb-hook</code>, 10 s timeout, except PermissionRequest at 120 s.</li>
+      <li>Orca's entries untouched, including TeammateIdle and PostCompact, which Coucou doesn't register.</li>
+      <li>Keys reordered alphabetically. Cosmetic. The file is re-serialised rather than patched.</li>
+    </ul>
+    <p>After confirming, make sure the file still parses and the counts match.</p>
+    <pre><button class="copy" type="button">copy</button><code>python3 - &lt;&lt;'EOF'
+import json, os
+d = json.load(open(os.path.expanduser('~/.claude/settings.json')))
+for k, v in sorted(d['hooks'].items()):
+    print(f'{k:22} {len(v)}')
+EOF</code></pre>
+    <div class="expect">
+      <span class="k">Expect</span><span>11 events at 2, Notification at 1, TeammateIdle and PostCompact at 1. A parse error or any 0 means restore the backup.</span>
+      <span class="k">Restore</span><span><code>cp ~/.claude/settings.json.pre-coucou ~/.claude/settings.json</code></span>
+    </div>
+    <p>Now start a Claude Code session in an Orca pane. The Claude pill should animate on the first tool call. If nothing moves, check the log for ignored events:</p>
+    <pre><button class="copy" type="button">copy</button><code>grep -c Ignored ~/Library/Logs/NotchBuddy/nb.log
+<span class="c"># want: 0. A nonzero count with "from Orca" means the unpatched filter is running.</span></code></pre>
+  </div>
+</section>
+
+<section id="pi">
+  <div class="step-head">
+    <div class="step-num">08</div>
+    <div><h2>Install the pi extension</h2><p class="goal">One file in pi's extensions folder. Every pi process loads it, including the glm-5.3 workers Orca dispatches.</p></div>
+  </div>
+  <div class="body">
+    <p>pi fires none of Claude Code's hooks, but it has an extension system, and Orca already uses it: <code>~/.pi/agent/extensions</code> holds Orca's own status extension. The file at <code>~/Desktop/coucou-status.ts</code> sits next to it and relays pi's events to Coucou's socket, tagged so Coucou gives each worker its own pill.</p>
+    <pre><button class="copy" type="button">copy</button><code>cp ~/Desktop/coucou-status.ts ~/.pi/agent/extensions/coucou-status.ts</code></pre>
+    <p>No restart of anything is needed. pi loads extensions at process start, so the next pi you or Orca launch picks it up. Verify with a one-word run from a scratch folder while Coucou is open:</p>
+    <pre><button class="copy" type="button">copy</button><code>cd /tmp && pi --no-session --model zai/glm-5.3 -p "Reply with exactly one word: pong"</code></pre>
+    <div class="expect">
+      <span class="k">Expect</span><span>A pill named <code>pi-tmp</code> appears, animates while the request runs, shows a finished card with "pong", and retires about five seconds later.</span>
+      <span class="k">Nothing?</span><span>Check Coucou is running and <code>ls -l ~/Library/Application\ Support/NotchBuddy/nb.sock</code> exists. The extension never prints, and never blocks pi, so a missing socket is silent by design.</span>
+    </div>
+    <p><b>How a dispatched worker looks.</b> The coordinator skill has Orca paste "Read docs/briefs/NN-slug.md in full and execute it" into the pane. The extension reads the brief name from that first prompt and tags the pill <code>pi-NN-slug</code>, so three parallel workers are three pills. Then, from the worker's own tool calls, it surfaces the protocol's milestones as steps:</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Worker does</th><th>Pill shows</th></tr></thead>
+      <tbody>
+        <tr><td>Reads the brief, edits files, runs tests</td><td>Read · 07-auth-hooks.md, Edit · hooks.ts, Bash · npm test, with a failed-step marker on non-zero exits</td></tr>
+        <tr><td><code>orca orchestration send --type heartbeat --phase implementing</code></td><td>phase · implementing</td></tr>
+        <tr><td><code>orca orchestration send --type status --subject "all files on disk"</code></td><td>note · all files on disk</td></tr>
+        <tr><td>Writes <code>docs/briefs/07-auth-hooks-report.md</code></td><td>report written · 07-auth-hooks-report.md</td></tr>
+        <tr><td><code>orca orchestration worker-done --outcome succeeded</code></td><td>Finished card: worker_done · succeeded. Mochi jumps, the pill retires</td></tr>
+        <tr><td>pi asks to approve a tool</td><td>Pill switches to the question state. Approve in the pane as before</td></tr>
+        <tr><td>Provider error, for example a timed-out request</td><td>Error card with the provider's message, once, even though pi retries</td></tr>
+      </tbody>
+    </table></div>
+    <p>Interactive pi sessions without a brief get a pill named after the working directory, or after the session name when you pass <code>--name</code>. Force a tag with <code>COUCOU_AGENT=my-tag</code>, or silence one process with <code>COUCOU_DISABLE=1</code>. Tags are lowercase letters, digits and hyphens, at most 24 characters, which is what Coucou accepts.</p>
+    <div class="callout"><b>Tested on this Mac on 2026-10-02</b> with pi 0.87.1 and glm-5.3: tool events, the final message, event ordering, and the error path with an unreachable provider. The full dispatch sequence was exercised against a simulated socket since no worker was running at the time. Nothing in the extension leaves the machine; it writes only to Coucou's owner-only socket.</div>
+  </div>
+</section>
+
+<section id="operate">
+  <div class="step-head">
+    <div class="step-num">09</div>
+    <div><h2>Operating rules</h2><p class="goal">Keep the convenience, keep the oversight.</p></div>
+  </div>
+  <div class="body">
+    <div class="rules">
+      <div class="rule-card"><h3>Approve Bash from the notch, nothing else</h3><p>The card shows the full command for Bash. For Edit, Write and every other tool it shows only the tool name. Approve those in the Orca pane where you can see the path and diff.</p></div>
+      <div class="rule-card"><h3>Treat "Always" as a settings change</h3><p>It writes a permanent permission rule into your Claude settings, exactly like "always allow" in the terminal. Use "Allow" unless you would write that rule by hand.</p></div>
+      <div class="rule-card"><h3>One card at a time</h3><p>If two Orca panes request permission together, the newer request takes the card and the older one is handed back to its terminal to re-ask. Nothing is auto-approved.</p></div>
+      <div class="rule-card"><h3>Workers are their own pills</h3><p>Each pi worker shows as pi-NN-slug with its phase, notes and report as steps. Claude Code's own SubagentStart and SubagentStop events still animate the Claude pill. Watch the tree too: files landing is still the best progress signal.</p></div>
+      <div class="rule-card"><h3>Hooks never block Claude</h3><p>If Coucou isn't running, the relay exits in under a second with no output. Quit the app any time without breaking a session.</p></div>
+      <div class="rule-card"><h3>No keys, no uploads</h3><p>With chat and integrations left unconfigured, the app makes no network requests at all. Everything stays on the local socket.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="update">
+  <div class="step-head">
+    <div class="step-num">10</div>
+    <div><h2>Updating</h2><p class="goal">Rebase the orca branch, read the hook server diff, rebuild.</p></div>
+  </div>
+  <div class="body">
+    <pre><button class="copy" type="button">copy</button><code>cd ~/src/coucou
+git fetch origin
+git log --oneline HEAD..origin/main -- NotchBuddy/Sources/App/HookServer.swift
+git rebase origin/main</code></pre>
+    <div class="expect">
+      <span class="k">Conflict</span><span>Only happens if upstream touches the two VS Code checks or the Claude pill handler. Re-apply the same three edits and <code>git rebase --continue</code>.</span>
+      <span class="k">Upstream fix</span><span>If a future upstream release accepts other terminals natively, drop the branch and build <code>main</code> instead.</span>
+    </div>
+    <p>Then repeat steps 03 to 05, quitting Coucou before copying over the app.</p>
+    <pre><button class="copy" type="button">copy</button><code>cd ~/src/coucou/NotchBuddy && xcodegen
+xcodebuild -project NotchBuddy.xcodeproj -scheme NotchBuddy \
+  -configuration Release -derivedDataPath build build \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+osascript -e 'quit app "Coucou"'
+codesign --force --deep --sign - build/Build/Products/Release/Coucou.app
+rm -rf /Applications/Coucou.app
+ditto build/Build/Products/Release/Coucou.app /Applications/Coucou.app
+open /Applications/Coucou.app</code></pre>
+    <p>If the relay script changed upstream, open Settings and click Install hooks again. The app rewrites <code>nb-hook</code> and shows a settings diff, which should be empty.</p>
+  </div>
+</section>
+
+<section id="rollback">
+  <div class="step-head">
+    <div class="step-num">11</div>
+    <div><h2>Rollback</h2><p class="goal">Four moves. No Keychain cleanup needed since no keys were entered.</p></div>
+  </div>
+  <div class="body">
+    <ol class="plain">
+      <li><b>Remove the hooks.</b> Settings → Claude Code → Remove hooks, or restore your pre-install copy. Orca's hooks are unaffected either way.
+        <pre><button class="copy" type="button">copy</button><code>cp ~/.claude/settings.json.pre-coucou ~/.claude/settings.json</code></pre>
+      </li>
+      <li><b>Remove the pi extension.</b> Running pi processes keep it until they exit.
+        <pre><button class="copy" type="button">copy</button><code>rm -f ~/.pi/agent/extensions/coucou-status.ts</code></pre>
+      </li>
+      <li><b>Quit and delete the app and its data.</b>
+        <pre><button class="copy" type="button">copy</button><code>osascript -e 'quit app "Coucou"'
+rm -rf /Applications/Coucou.app \
+  ~/Library/Application\ Support/NotchBuddy \
+  ~/Library/Logs/NotchBuddy \
+  ~/Library/Preferences/fr.louisraille.NotchBuddy.plist
+rm -f ~/.claude/settings.json.bak-*   <span class="c"># Coucou's own backups, optional</span></code></pre>
+      </li>
+      <li><b>Revoke the one permission.</b> System Settings → Privacy &amp; Security → Automation. Remove Coucou's entry for Orca.</li>
+    </ol>
+  </div>
+</section>
+
+</main>
+</div>
+
+<footer>Based on a read of the macOS Swift source at 8a5c263, the installed hook relay, the published v0.1.0 zip, Orca 1.4.218's hook script and the current contents of this Mac's Claude settings, carried out 2026-10-02. The patch is saved at ~/Desktop/coucou-orca.patch.</footer>
+</div>
+
+<script>
+(function(){
+  document.querySelectorAll('pre').forEach(function(pre){
+    var btn = pre.querySelector('.copy');
+    if(!btn) return;
+    btn.addEventListener('click', function(){
+      var code = pre.querySelector('code');
+      var text = code ? code.innerText : pre.innerText;
+      function done(){
+        btn.textContent = 'copied';
+        btn.dataset.done = '1';
+        setTimeout(function(){ btn.textContent = 'copy'; delete btn.dataset.done; }, 1600);
+      }
+      function fallback(){
+        try{
+          var r = document.createRange(); r.selectNodeContents(code || pre);
+          var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+          btn.textContent = 'selected';
+          setTimeout(function(){ btn.textContent = 'copy'; }, 1600);
+        }catch(e){}
+      }
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else { fallback(); }
+    });
+  });
+})();
+</script>
