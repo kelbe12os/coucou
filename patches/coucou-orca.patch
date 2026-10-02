@@ -229,7 +229,7 @@ index 5144fc4..5a996c8 100644
          state.stateOverride = .error
          state.noteMessage = message
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
-index 41b71c0..973f0a7 100644
+index 41b71c0..d97655b 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
 +++ b/NotchBuddy/Sources/App/HookServer.swift
 @@ -176,9 +176,8 @@ final class HookServer: @unchecked Sendable {
@@ -271,6 +271,29 @@ index 41b71c0..973f0a7 100644
          guard isVSCode else {
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+@@ -568,6 +576,22 @@ final class HookServer: @unchecked Sendable {
+ 
+     // MARK: - Outdated hook detection
+ 
++    /// True when ~/.claude/settings.json carries a Coucou hook on SessionStart (the installer writes all events together).
++    static func claudeHooksInstalled() -> Bool {
++        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
++            .appendingPathComponent(".claude/settings.json")
++        guard let data = try? Data(contentsOf: settingsURL),
++              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let hooks = settings["hooks"] as? [String: Any],
++              let groups = hooks["SessionStart"] as? [[String: Any]] else { return false }
++        return groups.contains { group in
++            (group["hooks"] as? [[String: Any]])?.contains { hook in
++                let cmd = hook["command"] as? String ?? ""
++                return cmd.contains("NotchBuddy") || cmd.contains("coucou")
++            } ?? false
++        }
++    }
++
+     /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
+     static func hooksNeedUpdate() -> Bool {
+         let settingsURL = FileManager.default.homeDirectoryForCurrentUser
 diff --git a/NotchBuddy/Sources/App/IslandTypes.swift b/NotchBuddy/Sources/App/IslandTypes.swift
 index 5200af8..8b46a88 100644
 --- a/NotchBuddy/Sources/App/IslandTypes.swift
@@ -443,7 +466,7 @@ index 6d9b198..f6f6f16 100644
                category: .workspace, subtitle: "Integration",  source: .agent,  comingSoon: true),
          .init(id: "agent_codex",         name: "Codex",       color: "#2DD4BF",
 diff --git a/NotchBuddy/Sources/App/SettingsView.swift b/NotchBuddy/Sources/App/SettingsView.swift
-index f9ee07e..34f265b 100644
+index f9ee07e..f25bb93 100644
 --- a/NotchBuddy/Sources/App/SettingsView.swift
 +++ b/NotchBuddy/Sources/App/SettingsView.swift
 @@ -5,6 +5,8 @@ import AppKit
@@ -455,7 +478,15 @@ index f9ee07e..34f265b 100644
  
      // Claude model — dynamic list fetched from the API, static fallback if unavailable
      private static let fallbackModels: [(id: String, label: String)] = [
-@@ -79,12 +81,48 @@ struct SettingsView: View {
+@@ -31,6 +33,7 @@ struct SettingsView: View {
+     @State private var showDiff: Bool = false
+     @State private var pendingHookJSON: String = ""
+     @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
++    @State private var claudeHooksInstalled: Bool = HookServer.claudeHooksInstalled()
+ 
+     #if !APPSTORE
+     @State private var geminiHooksInstalled: Bool = HookServer.geminiHooksInstalled()
+@@ -79,12 +82,48 @@ struct SettingsView: View {
          )
      }
  
@@ -505,7 +536,7 @@ index f9ee07e..34f265b 100644
                      VStack(alignment: .leading, spacing: 8) {
                          SecureField("API key (sk-ant-…)", text: $apiKey)
                              .textFieldStyle(.roundedBorder)
-@@ -116,7 +154,7 @@ struct SettingsView: View {
+@@ -116,7 +155,7 @@ struct SettingsView: View {
                                  .onChange(of: customModel) { _, value in applyCustomModel(value) }
                          }
  
@@ -514,3 +545,35 @@ index f9ee07e..34f265b 100644
                              .font(.system(size: 11))
                              .foregroundColor(.secondary)
                      }
+@@ -161,6 +200,15 @@ struct SettingsView: View {
+                 // MARK: Hooks
+                 GroupBox("Claude Code Hooks") {
+                     VStack(alignment: .leading, spacing: 10) {
++                        HStack(spacing: 6) {
++                            Circle().fill(claudeHooksInstalled ? Color(hex: "#22C55E") : Color(hex: "#F4505E"))
++                                .frame(width: 8, height: 8)
++                            Text(claudeHooksInstalled
++                                 ? "Installed in ~/.claude/settings.json — Claude Code sessions in Orca report to the notch"
++                                 : "Not installed — click Install hooks and confirm the diff")
++                                .font(.system(size: 11))
++                                .foregroundColor(.secondary)
++                        }
+                         if hookNeedsUpdate {
+                             HStack(spacing: 6) {
+                                 Image(systemName: "exclamationmark.triangle.fill")
+@@ -633,6 +681,7 @@ struct SettingsView: View {
+             statusMessage = "✓ Hooks installed in ~/.claude/settings.json"
+             pendingHookJSON = ""
+             hookNeedsUpdate = false
++            claudeHooksInstalled = HookServer.claudeHooksInstalled()
+         } catch {
+             statusMessage = "❌ Write error: \(error.localizedDescription)"
+         }
+@@ -642,6 +691,7 @@ struct SettingsView: View {
+         do {
+             try HookServer.shared.uninstallClaudeHooks()
+             statusMessage = "✓ Hooks removed."
++            claudeHooksInstalled = HookServer.claudeHooksInstalled()
+         } catch {
+             statusMessage = "❌ \(error.localizedDescription)"
+         }
