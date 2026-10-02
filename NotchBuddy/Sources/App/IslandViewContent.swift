@@ -123,11 +123,14 @@ struct OverviewView: View {
         guard let task else { return }
         switch task.id {
         case "integration_claude":
-            let vscodeBundleId = "com.microsoft.VSCode"
-            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == vscodeBundleId }) {
+            // Jump to the app hosting the Claude Code session: Orca first, then VS Code.
+            let hostBundleIds = ["com.stablyai.orca", "com.microsoft.VSCode"]
+            if let app = hostBundleIds.compactMap({ id in
+                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
+            }).first {
                 app.activate(options: .activateIgnoringOtherApps)
             } else {
-                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Visual Studio Code.app"))
+                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Orca.app"))
             }
         case "integration_resend":
             NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)

@@ -176,9 +176,8 @@ final class HookServer: @unchecked Sendable {
 
         let termProgram = payload["term_program"] as? String ?? ""
         let bundleId    = payload["bundle_id"]    as? String ?? ""
-        let isVSCode = termProgram.lowercased().contains("vscode") ||
-                       bundleId.lowercased().contains("vscode")
-        // External agents bypass the VS Code filter (their relay runs in any terminal).
+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
+        // External agents bypass the terminal filter (their relay runs in any terminal).
         guard isExternalAgent || isVSCode else {
             nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
             return
@@ -339,6 +338,16 @@ final class HookServer: @unchecked Sendable {
         // Already compact and non-alert: Mochi state update is enough, no expand
     }
 
+    /// Terminals whose Claude Code sessions show in the island and get approval cards.
+    /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
+    /// bundle com.stablyai.orca). Add more tokens here to support other terminals.
+    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca"]
+
+    static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
+        let t = termProgram.lowercased(), b = bundleId.lowercased()
+        return supportedTerminalTokens.contains { t.contains($0) || b.contains($0) }
+    }
+
     // MARK: - Permission request (blocking — Claude Code waits for decision)
 
     @MainActor
@@ -364,8 +373,7 @@ final class HookServer: @unchecked Sendable {
 
         let termProgram = payload["term_program"] as? String ?? ""
         let bundleId    = payload["bundle_id"]    as? String ?? ""
-        let isVSCode = termProgram.lowercased().contains("vscode") ||
-                       bundleId.lowercased().contains("vscode")
+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
         guard isVSCode else {
             Task.detached { [weak self] in
                 self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
