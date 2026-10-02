@@ -8,7 +8,9 @@ report pi worker progress to it.
 Coucou is an open-source macOS notch companion that shows live Claude Code sessions; this repo
 rebuilds it from source at a pinned upstream commit. The Orca patch
 (`patches/coucou-orca.patch`) teaches that build to accept Orca terminal panes as a Claude Code
-host, so sessions running inside Orca show up like any other. The pi extension
+host, so sessions running inside Orca show up like any other, names the idle slot after Orca,
+and adds a chat provider that runs the local `claude -p` so the notch chat works through your
+Claude Code login with no API key. The pi extension
 (`pi/coucou-status.ts`) reports pi worker progress to Coucou over its local socket, so
 dispatched pi agents appear in the notch while they run. `docs/rebuild-plan.html` is the full
 plan and audit; `docs/wireframe.html` is the UI walkthrough.
@@ -42,6 +44,8 @@ build/                       source checkout created by build.sh (gitignored)
    settings (Coucou Settings → Claude Code), then `scripts/hooks-check.sh` to confirm all 12
    events.
 6. `scripts/install-pi-extension.sh` — install the pi extension for future pi processes.
+7. Chat: open the island, click the speech bubble. The provider defaults to Claude Code
+   (Settings → "Claude Code (local)" shows the detected binary). An Anthropic key is optional.
 
 ## Tests
 
@@ -59,5 +63,5 @@ System Settings step).
 
 ## Status
 
-As of 2026-10-02, Xcode is not installed on this Mac, so the build step is pending; everything
-else is ready.
+As of 2026-10-02 evening, built, installed and verified on this Mac: Orca sessions show in the
+notch, hooks are installed, the pi extension is live, and chat runs through the local Claude Code CLI.

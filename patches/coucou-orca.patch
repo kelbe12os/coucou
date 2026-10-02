@@ -1,8 +1,67 @@
 diff --git a/NotchBuddy/Sources/App/AppState.swift b/NotchBuddy/Sources/App/AppState.swift
-index 3c1465c..530f072 100644
+index 3c1465c..2eb6114 100644
 --- a/NotchBuddy/Sources/App/AppState.swift
 +++ b/NotchBuddy/Sources/App/AppState.swift
-@@ -194,7 +194,8 @@ final class AppState: ObservableObject {
+@@ -60,7 +60,7 @@ final class AppState: ObservableObject {
+     }
+ 
+     // In-chat provider + model — picked via the model selector in the prompt view
+-    @Published var chatProvider: ChatProvider = .anthropic {
++    @Published var chatProvider: ChatProvider = .claudeCode {
+         didSet { UserDefaults.standard.set(chatProvider.rawValue, forKey: "chatProvider") }
+     }
+     @Published var googleChatModel: String = ChatProvider.google.defaultModel {
+@@ -69,6 +69,9 @@ final class AppState: ObservableObject {
+     @Published var openAIChatModel: String = ChatProvider.openai.defaultModel {
+         didSet { UserDefaults.standard.set(openAIChatModel, forKey: "openAIChatModel") }
+     }
++    @Published var claudeCodeModel: String = ChatProvider.claudeCode.defaultModel {
++        didSet { UserDefaults.standard.set(claudeCodeModel, forKey: "claudeCodeModel") }
++    }
+ 
+     // The always-on workspace pill (default: VS Code). Persisted.
+     @Published var mainPillId: String = PillCatalog.defaultMainPillId {
+@@ -83,6 +86,15 @@ final class AppState: ObservableObject {
+     /// Fetches models for `provider` if not already loaded or loading.
+     /// Sets `providerModelFetchError` if the key is absent or the request fails.
+     func fetchModelsIfNeeded(for provider: ChatProvider) {
++        if provider == .claudeCode {
++            if ClaudeCodeCLI.locate() == nil {
++                providerModelFetchError[provider] = "Claude Code CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN."
++            } else {
++                providerModelFetchError.removeValue(forKey: provider)
++                fetchedProviderModels[provider] = ClaudeCodeCLI.modelChoices
++            }
++            return
++        }
+         guard !loadingProviderModels.contains(provider),
+               fetchedProviderModels[provider] == nil else { return }
+         guard let apiKey = KeychainStore.shared.get(provider.keychainKey), !apiKey.isEmpty else {
+@@ -94,6 +106,7 @@ final class AppState: ObservableObject {
+         Task {
+             let models: [(id: String, label: String)]
+             switch provider {
++            case .claudeCode: models = []
+             case .anthropic: models = await ClaudeService.fetchModels(apiKey: apiKey)
+             case .google:    models = await ClaudeService.fetchGoogleModels(apiKey: apiKey)
+             case .openai:    models = await ClaudeService.fetchOpenAIModels(apiKey: apiKey)
+@@ -106,6 +119,7 @@ final class AppState: ObservableObject {
+                 // If the saved model isn't in the fetched list, pick a sensible default:
+                 // prefer "sonnet" (Anthropic), "flash" (Google), "mini" (OpenAI); else first.
+                 switch provider {
++                case .claudeCode: break
+                 case .anthropic:
+                     if !models.contains(where: { $0.id == claudeModel }) {
+                         claudeModel = models.first(where: { $0.id.contains("sonnet") })?.id ?? models.first!.id
+@@ -126,6 +140,7 @@ final class AppState: ObservableObject {
+     /// The model currently active for chat (provider-aware).
+     var activeChatModel: String {
+         switch chatProvider {
++        case .claudeCode: return claudeCodeModel
+         case .anthropic: return claudeModel
+         case .google:    return googleChatModel
+         case .openai:    return openAIChatModel
+@@ -194,7 +209,8 @@ final class AppState: ObservableObject {
      }
  
      // Active integration pills (VS Code excluded — always on). Max 4.
@@ -12,6 +71,329 @@ index 3c1465c..530f072 100644
          didSet {
              if let data = try? JSONEncoder().encode(Array(activeIntegrations)) {
                  UserDefaults.standard.set(data, forKey: "activeIntegrations")
+@@ -251,6 +267,7 @@ final class AppState: ObservableObject {
+         if let v = ud.string(forKey: "chatProvider"), let p = ChatProvider(rawValue: v) { chatProvider = p }
+         if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
+         if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
++        if let v = ud.string(forKey: "claudeCodeModel"), !v.isEmpty { claudeCodeModel = v }
+         // Migrate old 60s default → 15s
+         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
+             autoCloseInterval = (v == 60) ? 15 : v
+diff --git a/NotchBuddy/Sources/App/ClaudeCodeCLI.swift b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
+new file mode 100644
+index 0000000..ff9fbb3
+--- /dev/null
++++ b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
+@@ -0,0 +1,160 @@
++import Foundation
++
++/// Runs the locally installed Claude Code CLI in headless mode (`claude -p`) so the chat uses the
++/// user's Claude Code login instead of an API key. Everything here is nonisolated and Sendable;
++/// callers are @MainActor and await the result.
++enum ClaudeCodeCLI {
++
++    struct Output: Sendable {
++        let text: String
++        let sessionId: String?
++        let isError: Bool
++    }
++
++    /// Model choices offered in the picker and in Settings. "default" means: do not pass --model,
++    /// so Claude Code uses whatever the user configured for the CLI itself.
++    static let modelChoices: [(id: String, label: String)] = [
++        ("default", "Default (your Claude Code setting)"),
++        ("opus",    "Opus"),
++        ("sonnet",  "Sonnet"),
++        ("haiku",   "Haiku"),
++    ]
++
++    /// First executable `claude` found. $COUCOU_CLAUDE_BIN wins; then the usual install paths.
++    static func locate() -> String? {
++        let fm = FileManager.default
++        let env = ProcessInfo.processInfo.environment
++        if let p = env["COUCOU_CLAUDE_BIN"], fm.isExecutableFile(atPath: p) { return p }
++        let home = NSHomeDirectory()
++        var candidates = [
++            "\(home)/.local/bin/claude",
++            "/opt/homebrew/bin/claude",
++            "/usr/local/bin/claude",
++            "\(home)/.claude/local/claude",
++            "\(home)/.bun/bin/claude",
++            "\(home)/.npm-global/bin/claude",
++        ]
++        if let nodes = try? fm.contentsOfDirectory(atPath: "\(home)/.nvm/versions/node") {
++            candidates += nodes.sorted().reversed().map { "\(home)/.nvm/versions/node/\($0)/bin/claude" }
++        }
++        return candidates.first { fm.isExecutableFile(atPath: $0) }
++    }
++
++    /// `claude --version`, first line, or nil when the binary is missing or does not answer in 10 s.
++    static func version() async -> String? {
++        guard let bin = locate() else { return nil }
++        guard let r = try? await execute(bin: bin, args: ["--version"], cwd: nil, timeout: 10) else { return nil }
++        return r.stdout.split(separator: "\n").first.map { String($0).trimmingCharacters(in: .whitespaces) }
++    }
++
++    /// One headless turn. Pass `resumeSessionId` to continue a conversation.
++    static func run(prompt: String, systemPrompt: String, model: String?, resumeSessionId: String?,
++                    addDirs: [String], cwd: String?, timeout: TimeInterval = 120) async throws -> Output {
++        guard let bin = locate() else {
++            throw failure("Claude Code CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN.")
++        }
++        var args = ["-p", prompt,
++                    "--output-format", "json",
++                    "--allowedTools", "WebSearch,WebFetch,Read",
++                    "--append-system-prompt", systemPrompt]
++        if let m = model, !m.isEmpty, m != "default" { args += ["--model", m] }
++        if let s = resumeSessionId, !s.isEmpty { args += ["--resume", s] }
++        for d in addDirs { args += ["--add-dir", d] }
++
++        let r = try await execute(bin: bin, args: args, cwd: cwd, timeout: timeout)
++        if r.timedOut {
++            throw failure("Claude Code did not answer within \(Int(timeout)) s.")
++        }
++        guard let data = r.stdout.data(using: .utf8),
++              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
++            let tail = String((r.stderr.isEmpty ? r.stdout : r.stderr).suffix(300))
++                .trimmingCharacters(in: .whitespacesAndNewlines)
++            throw failure(tail.isEmpty ? "Claude Code returned no output (exit \(r.status))." : tail)
++        }
++        let text = (json["result"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++        let isError = (json["is_error"] as? Bool ?? false) || r.status != 0
++        return Output(text: text, sessionId: json["session_id"] as? String, isError: isError)
++    }
++
++    // MARK: - Process plumbing
++
++    private struct Exec: Sendable {
++        let status: Int32
++        let stdout: String
++        let stderr: String
++        let timedOut: Bool
++    }
++
++    private final class DataBox: @unchecked Sendable {
++        var data = Data()
++    }
++
++    private static func execute(bin: String, args: [String], cwd: String?, timeout: TimeInterval) async throws -> Exec {
++        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Exec, Error>) in
++            DispatchQueue.global(qos: .userInitiated).async {
++                let p = Process()
++                p.executableURL = URL(fileURLWithPath: bin)
++                p.arguments = args
++
++                // The CLI finds its Keychain login through USER/LOGNAME and HOME; a GUI app has
++                // them, but set them explicitly so a missing one can never show up as "Not logged in".
++                var env = ProcessInfo.processInfo.environment
++                if env["HOME"] == nil { env["HOME"] = NSHomeDirectory() }
++                if env["USER"] == nil { env["USER"] = NSUserName() }
++                if env["LOGNAME"] == nil { env["LOGNAME"] = NSUserName() }
++                let binDir = (bin as NSString).deletingLastPathComponent
++                let basePath = [binDir, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"].joined(separator: ":")
++                env["PATH"] = env["PATH"].map { basePath + ":" + $0 } ?? basePath
++                for k in env.keys where k.hasPrefix("CLAUDE_CODE_") { env.removeValue(forKey: k) }
++                p.environment = env
++                p.currentDirectoryURL = URL(fileURLWithPath: cwd ?? NSHomeDirectory())
++
++                let outPipe = Pipe()
++                let errPipe = Pipe()
++                p.standardOutput = outPipe
++                p.standardError = errPipe
++                p.standardInput = FileHandle.nullDevice
++
++                do {
++                    try p.run()
++                } catch {
++                    cont.resume(throwing: error)
++                    return
++                }
++
++                let timedOut = DataBox()
++                let killer = DispatchWorkItem {
++                    if p.isRunning {
++                        timedOut.data = Data([1])
++                        p.terminate()
++                    }
++                }
++                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
++
++                // Drain stderr concurrently so a chatty child can never block on a full pipe.
++                let errBox = DataBox()
++                let group = DispatchGroup()
++                group.enter()
++                let errHandle = errPipe.fileHandleForReading
++                DispatchQueue.global().async {
++                    errBox.data = errHandle.readDataToEndOfFile()
++                    group.leave()
++                }
++                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
++                group.wait()
++                p.waitUntilExit()
++                killer.cancel()
++
++                cont.resume(returning: Exec(
++                    status: p.terminationStatus,
++                    stdout: String(data: outData, encoding: .utf8) ?? "",
++                    stderr: String(data: errBox.data, encoding: .utf8) ?? "",
++                    timedOut: !timedOut.data.isEmpty))
++            }
++        }
++    }
++
++    private static func failure(_ message: String) -> NSError {
++        NSError(domain: "ClaudeCodeCLI", code: 0, userInfo: [NSLocalizedDescriptionKey: message])
++    }
++}
+diff --git a/NotchBuddy/Sources/App/ClaudeService.swift b/NotchBuddy/Sources/App/ClaudeService.swift
+index 5144fc4..5a996c8 100644
+--- a/NotchBuddy/Sources/App/ClaudeService.swift
++++ b/NotchBuddy/Sources/App/ClaudeService.swift
+@@ -186,8 +186,12 @@ final class ClaudeService {
+     // Multi-turn conversation messages (for API)
+     private var conversationMessages: [[String: Any]] = []
+ 
++    // Claude Code CLI session id for multi-turn chat (resume)
++    private var claudeCodeSessionId: String?
++
+     func clearConversation() {
+         conversationMessages = []
++        claudeCodeSessionId = nil
+     }
+ 
+     private let systemPrompt = """
+@@ -197,6 +201,46 @@ final class ClaudeService {
+     No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.
+     """
+ 
++    private func chatViaClaudeCode(query: String, context: PromptContext?, state: AppState) async {
++        var prompt = query
++        var addDirs: [String] = []
++        var cwd: String? = nil
++        if claudeCodeSessionId == nil, let context {
++            switch context {
++            case .window(let app, let title, let url):
++                var text = "Context — App: \(app), Window: \(title)"
++                if let url { text += ", URL: \(url)" }
++                prompt = text + "\n\n" + query
++            case .file(let name, let fileURL):
++                if let fileURL {
++                    let dir = fileURL.deletingLastPathComponent().path
++                    addDirs = [dir]; cwd = dir
++                    prompt = "Read the file at \(fileURL.path) with the Read tool first.\nFile: \(name)\n\n" + query
++                } else {
++                    prompt = "File: \(name)\n\n" + query
++                }
++            }
++        }
++        do {
++            let out = try await ClaudeCodeCLI.run(prompt: prompt, systemPrompt: systemPrompt,
++                                                  model: state.claudeCodeModel,
++                                                  resumeSessionId: claudeCodeSessionId,
++                                                  addDirs: addDirs, cwd: cwd)
++            if out.isError {
++                await showError("Claude Code: \(out.text.isEmpty ? "request failed" : out.text)", state: state)
++                return
++            }
++            if let sid = out.sessionId, !sid.isEmpty { claudeCodeSessionId = sid }
++            guard !out.text.isEmpty else { await showError("No response text.", state: state); return }
++            state.chatHistory.append(ChatMessage(role: .assistant, content: out.text))
++            state.stateOverride = nil
++            state.view = .prompt
++            NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.happy)
++        } catch {
++            await showError("Claude Code: \(error.localizedDescription)", state: state)
++        }
++    }
++
+     private let webSearchTools: [[String: Any]] = [
+         ["type": "web_search_20250305", "name": "web_search", "max_uses": 5]
+     ]
+@@ -204,6 +248,10 @@ final class ClaudeService {
+     // MARK: - Chat (multi-turn, natural text + web search)
+ 
+     func chat(query: String, context: PromptContext?, state: AppState) async {
++        if state.chatProvider == .claudeCode {
++            await chatViaClaudeCode(query: query, context: context, state: state)
++            return
++        }
+         guard state.chatProvider == .anthropic else {
+             await chatOpenAICompatible(query: query, context: context, state: state)
+             return
+@@ -266,6 +314,7 @@ final class ClaudeService {
+         case .google:  baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+         case .openai:  baseURL = "https://api.openai.com/v1/chat/completions"
+         case .anthropic: return
++        case .claudeCode: return
+         }
+         guard let url = URL(string: baseURL) else { return }
+ 
+@@ -340,6 +389,10 @@ final class ClaudeService {
+     // MARK: - Structured search (M8 — window attach + web search)
+ 
+     func search(query: String, context: PromptContext?, state: AppState) async {
++        if state.chatProvider == .claudeCode {
++            await searchViaClaudeCode(query: query, context: context, state: state)
++            return
++        }
+         guard let key = apiKey, !key.isEmpty else {
+             await showError("Anthropic API key missing. Open settings to configure it.", state: state)
+             return
+@@ -460,7 +513,10 @@ final class ClaudeService {
+             await showError("Unexpected API response.", state: state)
+             return
+         }
++        await handleResultText(text, state: state)
++    }
+ 
++    private func handleResultText(_ text: String, state: AppState) async {
+         // Strip markdown code fences if present, then extract JSON object
+         let cleanText: String
+         if let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}") {
+@@ -500,6 +556,43 @@ final class ClaudeService {
+         NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.proud)
+     }
+ 
++    private func searchViaClaudeCode(query: String, context: PromptContext?, state: AppState) async {
++        var prompt: String
++        var addDirs: [String] = []
++        var cwd: String? = nil
++        switch context {
++        case .window(let appName, let title, let url):
++            prompt = "App: \(appName)\nWindow title: \(title)"
++            if let url { prompt += "\nURL: \(url)" }
++            prompt += "\n\nRequest: \(query)"
++        case .file(let name, let fileURL):
++            if let fileURL {
++                let dir = fileURL.deletingLastPathComponent().path
++                addDirs = [dir]; cwd = dir
++                prompt = "Read the file at \(fileURL.path) with the Read tool first.\nFile: \(name)\n\nRequest: \(query)"
++            } else {
++                prompt = "File: \(name)\n\nRequest: \(query)"
++            }
++        case nil:
++            prompt = query
++        }
++        let system = """
++        You are an assistant built into the notch of a Mac. Reply in English, short and precise.
++        Reply ONLY with valid JSON in this exact format:
++        {"title":"...","items":[{"label":"...","detail":"...","url":"..."}],"note":"..."}
++        Maximum 3 items. "url" is optional. "note" is optional.
++        """
++        do {
++            let out = try await ClaudeCodeCLI.run(prompt: prompt, systemPrompt: system,
++                                                  model: state.claudeCodeModel, resumeSessionId: nil,
++                                                  addDirs: addDirs, cwd: cwd)
++            if out.isError { await showError("Claude Code: \(out.text)", state: state); return }
++            await handleResultText(out.text, state: state)
++        } catch {
++            await showError("Claude Code: \(error.localizedDescription)", state: state)
++        }
++    }
++
+     private func showError(_ message: String, state: AppState) async {
+         state.stateOverride = .error
+         state.noteMessage = message
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
 index 41b71c0..973f0a7 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
@@ -55,8 +437,51 @@ index 41b71c0..973f0a7 100644
          guard isVSCode else {
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
+diff --git a/NotchBuddy/Sources/App/IslandTypes.swift b/NotchBuddy/Sources/App/IslandTypes.swift
+index 5200af8..922f07b 100644
+--- a/NotchBuddy/Sources/App/IslandTypes.swift
++++ b/NotchBuddy/Sources/App/IslandTypes.swift
+@@ -66,12 +66,14 @@ enum AgentSource: Equatable {
+ // MARK: - Chat provider
+ 
+ enum ChatProvider: String, CaseIterable, Codable {
++    case claudeCode = "claude-code"
+     case anthropic = "anthropic"
+     case google    = "google"
+     case openai    = "openai"
+ 
+     var displayName: String {
+         switch self {
++        case .claudeCode: "Claude Code"
+         case .anthropic: "Anthropic"
+         case .google:    "Google"
+         case .openai:    "OpenAI"
+@@ -80,6 +82,7 @@ enum ChatProvider: String, CaseIterable, Codable {
+ 
+     var accentHex: String {
+         switch self {
++        case .claudeCode: "#E0A030"
+         case .anthropic: "#E07950"
+         case .google:    "#4285F4"
+         case .openai:    "#10A37F"
+@@ -88,6 +91,7 @@ enum ChatProvider: String, CaseIterable, Codable {
+ 
+     var defaultModel: String {
+         switch self {
++        case .claudeCode: "default"
+         case .anthropic: "claude-sonnet-4-6"
+         case .google:    "gemini-2.0-flash"
+         case .openai:    "gpt-4o"
+@@ -96,6 +100,7 @@ enum ChatProvider: String, CaseIterable, Codable {
+ 
+     var keychainKey: String {
+         switch self {
++        case .claudeCode: ""
+         case .anthropic: "anthropic-api-key"
+         case .google:    "google-api-key"
+         case .openai:    "openai-api-key"
 diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
-index c0e1ec3..cd57f20 100644
+index c0e1ec3..aed6a8e 100644
 --- a/NotchBuddy/Sources/App/IslandViewContent.swift
 +++ b/NotchBuddy/Sources/App/IslandViewContent.swift
 @@ -123,11 +123,14 @@ struct OverviewView: View {
@@ -77,7 +502,15 @@ index c0e1ec3..cd57f20 100644
              }
          case "integration_resend":
              NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)
-@@ -1265,7 +1268,7 @@ struct IntegrationCardView: View {
+@@ -954,6 +957,7 @@ struct ModelPickerView: View {
+                     ForEach(models, id: \.id) { model in
+                         Button {
+                             switch state.chatProvider {
++                            case .claudeCode: state.claudeCodeModel = model.id
+                             case .anthropic: state.claudeModel = model.id
+                             case .google:    state.googleChatModel = model.id
+                             case .openai:    state.openAIChatModel = model.id
+@@ -1265,7 +1269,7 @@ struct IntegrationCardView: View {
                     : task.id == "integration_calcom"  ? appState.calcomError
                     : nil
          if let err = svcErr { return err }
@@ -86,7 +519,7 @@ index c0e1ec3..cd57f20 100644
          let isAI    = task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai"
          if isConfigured {
              if isHooks { return "Hooks installed" }
-@@ -1379,7 +1382,7 @@ struct IntegrationCardView: View {
+@@ -1379,7 +1383,7 @@ struct IntegrationCardView: View {
  
                  HStack(spacing: 8) {
                      if task.id == "integration_claude" {
@@ -95,7 +528,7 @@ index c0e1ec3..cd57f20 100644
                              .font(.system(size: 11, weight: .medium))
                              .foregroundColor(Color(hex: task.color).opacity(0.7))
                              .buttonStyle(.plain)
-@@ -1482,29 +1485,16 @@ struct IntegrationCardView: View {
+@@ -1482,29 +1486,16 @@ struct IntegrationCardView: View {
          }
      }
  
@@ -144,3 +577,75 @@ index 6d9b198..f6f6f16 100644
          .init(id: "agent_cursor",        name: "Cursor",      color: "#C0C4CC",
                category: .workspace, subtitle: "Integration",  source: .agent,  comingSoon: true),
          .init(id: "agent_codex",         name: "Codex",       color: "#2DD4BF",
+diff --git a/NotchBuddy/Sources/App/SettingsView.swift b/NotchBuddy/Sources/App/SettingsView.swift
+index f9ee07e..34f265b 100644
+--- a/NotchBuddy/Sources/App/SettingsView.swift
++++ b/NotchBuddy/Sources/App/SettingsView.swift
+@@ -5,6 +5,8 @@ import AppKit
+ struct SettingsView: View {
+     @ObservedObject private var state = AppState.shared
+     @State private var apiKey: String = KeychainStore.shared.get("anthropic-api-key") ?? ""
++    @State private var claudeCLIPath: String? = ClaudeCodeCLI.locate()
++    @State private var claudeCLIVersion: String = ""
+ 
+     // Claude model — dynamic list fetched from the API, static fallback if unavailable
+     private static let fallbackModels: [(id: String, label: String)] = [
+@@ -79,12 +81,48 @@ struct SettingsView: View {
+         )
+     }
+ 
++    private func loadCLIVersion() {
++        Task { claudeCLIVersion = await ClaudeCodeCLI.version() ?? "" }
++    }
++
+     var body: some View {
+         ScrollView {
+             VStack(alignment: .leading, spacing: 18) {
+ 
+                 // MARK: API
+-                GroupBox("Anthropic API") {
++                GroupBox("Claude Code (local)") {
++                    VStack(alignment: .leading, spacing: 8) {
++                        Text("Chat through your Claude Code login (claude -p). No API key needed.")
++                            .font(.system(size: 12)).foregroundColor(.secondary)
++                        HStack(spacing: 6) {
++                            Circle().fill(claudeCLIPath == nil ? Color(hex: "#F4505E") : Color(hex: "#22C55E"))
++                                .frame(width: 8, height: 8)
++                            if let p = claudeCLIPath {
++                                Text("Found: \(p)\(claudeCLIVersion.isEmpty ? "" : " · \(claudeCLIVersion)")")
++                                    .font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
++                            } else {
++                                Text("claude CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN.")
++                                    .font(.system(size: 11))
++                            }
++                        }
++                        Picker("Model", selection: $state.claudeCodeModel) {
++                            ForEach(ClaudeCodeCLI.modelChoices, id: \.id) { m in Text(m.label).tag(m.id) }
++                        }
++                        HStack(spacing: 8) {
++                            Button(state.chatProvider == .claudeCode ? "✓ Used for chat" : "Use Claude Code for chat") {
++                                state.chatProvider = .claudeCode
++                                statusMessage = "✓ Chat now uses Claude Code."
++                            }
++                            .buttonStyle(.borderedProminent)
++                            .disabled(state.chatProvider == .claudeCode || claudeCLIPath == nil)
++                            Button("Re-detect") { claudeCLIPath = ClaudeCodeCLI.locate(); loadCLIVersion() }
++                        }
++                    }
++                    .padding(6)
++                }
++                .task { loadCLIVersion() }
++
++                GroupBox("Anthropic API (optional)") {
+                     VStack(alignment: .leading, spacing: 8) {
+                         SecureField("API key (sk-ant-…)", text: $apiKey)
+                             .textFieldStyle(.roundedBorder)
+@@ -116,7 +154,7 @@ struct SettingsView: View {
+                                 .onChange(of: customModel) { _, value in applyCustomModel(value) }
+                         }
+ 
+-                        Text("Used by the chat. The list comes from your Anthropic account.")
++                        Text("Only needed if you prefer the API over your Claude Code login. The list comes from your Anthropic account.")
+                             .font(.system(size: 11))
+                             .foregroundColor(.secondary)
+                     }
