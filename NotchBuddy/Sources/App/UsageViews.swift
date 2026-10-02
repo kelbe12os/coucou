@@ -16,16 +16,15 @@ private func pctText(_ p: Int?) -> String {
     p.map { "\($0)%" } ?? "—"
 }
 
-/// nil → "", same calendar day → "HH:mm", otherwise → "EEE" (e.g. "Mon").
+/// nil → "", within the next 24 h → "HH:mm" (a window that ends after midnight still shows its
+/// clock time), otherwise → "EEE HH:mm" (e.g. "Mon 09:00"). Past dates show "now".
 private func resetText(_ d: Date?) -> String {
     guard let d = d else { return "" }
+    let delta = d.timeIntervalSinceNow
+    if delta <= 0 { return "now" }
     let f = DateFormatter()
     f.locale = Locale.current
-    if Calendar.current.isDate(d, inSameDayAs: Date()) {
-        f.dateFormat = "HH:mm"
-    } else {
-        f.dateFormat = "EEE"
-    }
+    f.dateFormat = delta < 24 * 3600 ? "HH:mm" : "EEE HH:mm"
     return f.string(from: d)
 }
 
