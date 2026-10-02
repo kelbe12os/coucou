@@ -199,6 +199,7 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
       <li>pi workers Orca dispatches: one pill per brief, with phase, note, report and worker_done milestones</li>
       <li>Chat through your Claude Code login via <code>claude -p</code>, no API key</li>
       <li>Usage card: Claude 5-hour and 7-day limits plus the Z.ai GLM quota, folding to a strip under worker pills</li>
+      <li>Claude Code sessions on other machines, over Tailscale, with approvals</li>
     </ul></div>
     <div class="scope" style="display:block"><h3>Left out on purpose</h3><ul>
       <li>Gemini CLI and Antigravity hooks</li>
@@ -223,6 +224,7 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
     <li><a href="#hooks"><span class="n">07</span><span>Install hooks</span></a></li>
     <li><a href="#pi"><span class="n">08</span><span>pi extension</span></a></li>
     <li><a href="#usage"><span class="n">08b</span><span>Usage card</span></a></li>
+    <li><a href="#remote"><span class="n">08c</span><span>Remote sessions</span></a></li>
     <li><a href="#operate"><span class="n">09</span><span>Operating rules</span></a></li>
     <li><a href="#update"><span class="n">10</span><span>Updating</span></a></li>
     <li><a href="#rollback"><span class="n">11</span><span>Rollback</span></a></li>
@@ -301,7 +303,9 @@ NotchBuddy/Sources/App/IslandTypes.swift       |  5 +            ChatProvider.cl
 NotchBuddy/Sources/App/SettingsView.swift      | 120 +++++++      "Claude Code (local)" and "Usage card" boxes; hooks status
 NotchBuddy/Sources/App/ZaiPoller.swift         | 81 ++++++        new: Z.ai GLM quota poller, every 60 s
 NotchBuddy/Sources/App/UsageViews.swift        | 216 ++++++++++   new: usage card and one-line strip
-11 files changed, 1041 insertions(+), 40 deletions(-)
+NotchBuddy/Sources/App/RelayServer.swift       | 280 ++++++++++   new: HTTP relay for remote sessions
+NotchBuddy/project.yml, Resources/Info.plist   |  4 +-           English permission prompts
+15 files changed
 
 <span class="c"># The full diff lives at patches/coucou-orca.patch in the coucou-orca repo.</span></code></pre>
     </details>
@@ -476,6 +480,28 @@ EOF</code></pre>
       <span class="k">Verify</span><span><code>tail -3 ~/Library/Logs/NotchBuddy/nb.log</code> shows a <code>StatusLine ctx=… 5h=… 7d=…</code> line after a Claude reply and a <code>Zai 5h=… wk=… level=…</code> line within a minute of importing the key.</span>
       <span class="k">Thresholds</span><span>Bars turn amber at 75 percent and red at 90. Crossing 90 plays the rate-limit sound once. The main card header shows the focused session's context as <code>ctx NN%</code>.</span>
       <span class="k">If Orca rewrites the status line</span><span>The Usage card box turns red with "relay not installed". Click Install relay again.</span>
+    </div>
+  </div>
+</section>
+
+<section id="remote">
+  <div class="step-head">
+    <div class="step-num">08c</div>
+    <div><h2>Sessions on other machines</h2><p class="goal">A token-protected HTTP relay in Coucou, a hook script on the remote, Tailscale in between.</p></div>
+  </div>
+  <div class="body">
+    <p>Claude Code on another machine fires its hooks there, where Coucou's socket does not exist. Coucou therefore also listens on an HTTP port and bridges each request to its socket, so status, steps and the blocking Allow/Deny all work for remote sessions. Remote sessions show as <code>project @ host</code>.</p>
+    <ol class="plain">
+      <li><b>On the Mac.</b> Settings → <b>Remote sessions</b>: enable the relay, note the port (6771) and copy the token. The box also shows the Mac's LAN name and its Tailscale name.</li>
+      <li><b>Network.</b> Put the remote machine on the same tailnet as the Mac. Then the Mac's Tailscale name works from anywhere; the LAN name and address work at home even with Tailscale off on the Mac. On Windows: firewall on for the Tailscale interface, key expiry disabled for an always-on machine, "Use Tailscale subnets" off when the machine already sits on a subnet a router advertises.</li>
+      <li><b>On the remote.</b> Copy <code>scripts/remote/nb-hook-remote.sh</code> and <code>install-remote-hooks.sh</code> over, then in Git Bash or any shell:
+        <pre><button class="copy" type="button">copy</button><code>sh install-remote-hooks.sh --urls "http://&lt;mac-tailnet-name&gt;:6771 http://&lt;mac&gt;.local:6771 http://&lt;mac-lan-ip&gt;:6771" --token &lt;token&gt;</code></pre>
+        It writes <code>~/.coucou/relay.conf</code>, tests each URL, and merges twelve hook entries into that machine's Claude settings next to whatever is already there. <code>--uninstall</code> reverses it. Needs curl plus a real Python or PowerShell.</li>
+    </ol>
+    <div class="expect">
+      <span class="k">Verify</span><span>Run <code>claude -p "Reply with exactly one word: pong"</code> on the remote. Coucou's log on the Mac gains <code>SessionStart &lt;dir&gt; @ &lt;host&gt;</code>.</span>
+      <span class="k">Limits</span><span>Only new sessions on the remote pick up the hooks; restart running ones. Permission prompts from the remote fall back to its terminal after 115 s without a click, and whenever no relay URL answers.</span>
+      <span class="k">Security</span><span>Every request needs the token; bad tokens are logged and dropped. The Mac's firewall is off today; if you turn it on, the ad-hoc signed app will ask once per rebuild. Regenerate the token in Settings and rerun the installer to rotate it.</span>
     </div>
   </div>
 </section>

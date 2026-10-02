@@ -27,6 +27,7 @@ test/dispatch-harness.ts     synthetic 21-event test of the extension (bun)
 test/live-harness.ts         drives a real pi run against a stand-in socket (manual)
 docs/rebuild-plan.html       the full plan
 docs/widgets-guide.md        how to add tabs and widgets to the island
+scripts/remote/              hook relay + installer for Claude Code on other machines
 docs/wireframe.html          UI walkthrough
 docs/briefs/                 briefs and worker reports
 build/                       source checkout created by build.sh (gitignored)
@@ -45,7 +46,9 @@ build/                       source checkout created by build.sh (gitignored)
    settings (Coucou Settings → Claude Code), then `scripts/hooks-check.sh` to confirm all 12
    events.
 6. `scripts/install-pi-extension.sh` — install the pi extension for future pi processes.
-7. Chat: open the island, click the speech bubble. The provider defaults to Claude Code
+7. Other machines: Settings → Remote sessions, enable and copy the token; on the remote run
+   `scripts/remote/install-remote-hooks.sh --urls "http://<mac-tailnet-name>:6771 …" --token <token>`.
+8. Chat: open the island, click the speech bubble. The provider defaults to Claude Code
    (Settings → "Claude Code (local)" shows the detected binary). An Anthropic key is optional.
 
 ## Tests
