@@ -1,3 +1,17 @@
+diff --git a/NotchBuddy/Sources/App/AppState.swift b/NotchBuddy/Sources/App/AppState.swift
+index 3c1465c..530f072 100644
+--- a/NotchBuddy/Sources/App/AppState.swift
++++ b/NotchBuddy/Sources/App/AppState.swift
+@@ -194,7 +194,8 @@ final class AppState: ObservableObject {
+     }
+ 
+     // Active integration pills (VS Code excluded — always on). Max 4.
+-    @Published var activeIntegrations: Set<String> = ["integration_resend", "integration_n8n", "integration_vercel", "integration_github"] {
++    // Fork default: no service pills until the user checks them in Settings → Active pills.
++    @Published var activeIntegrations: Set<String> = [] {
+         didSet {
+             if let data = try? JSONEncoder().encode(Array(activeIntegrations)) {
+                 UserDefaults.standard.set(data, forKey: "activeIntegrations")
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
 index 41b71c0..973f0a7 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
@@ -42,7 +56,7 @@ index 41b71c0..973f0a7 100644
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
 diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
-index c0e1ec3..381758c 100644
+index c0e1ec3..cd57f20 100644
 --- a/NotchBuddy/Sources/App/IslandViewContent.swift
 +++ b/NotchBuddy/Sources/App/IslandViewContent.swift
 @@ -123,11 +123,14 @@ struct OverviewView: View {
@@ -63,3 +77,70 @@ index c0e1ec3..381758c 100644
              }
          case "integration_resend":
              NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)
+@@ -1265,7 +1268,7 @@ struct IntegrationCardView: View {
+                    : task.id == "integration_calcom"  ? appState.calcomError
+                    : nil
+         if let err = svcErr { return err }
+-        let isHooks = task.id == "agent_gemini" || task.id == "agent_antigravity"
++        let isHooks = task.id == "integration_claude" || task.id == "agent_gemini" || task.id == "agent_antigravity"
+         let isAI    = task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai"
+         if isConfigured {
+             if isHooks { return "Hooks installed" }
+@@ -1379,7 +1382,7 @@ struct IntegrationCardView: View {
+ 
+                 HStack(spacing: 8) {
+                     if task.id == "integration_claude" {
+-                        Button("Open Visual Studio Code") { openVSCode() }
++                        Button("Open Orca") { openHost() }
+                             .font(.system(size: 11, weight: .medium))
+                             .foregroundColor(Color(hex: task.color).opacity(0.7))
+                             .buttonStyle(.plain)
+@@ -1482,29 +1485,16 @@ struct IntegrationCardView: View {
+         }
+     }
+ 
+-    private func openVSCode() {
+-        let ids = ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
+-        let appURL = ids.compactMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }.first
+-
+-        // If we have a project folder, open it directly in VS Code
+-        if let cwd = task.sessionCwd, !cwd.isEmpty, let appURL = appURL {
+-            NSWorkspace.shared.open(
+-                [URL(fileURLWithPath: cwd)],
+-                withApplicationAt: appURL,
+-                configuration: .init(),
+-                completionHandler: nil
+-            )
+-            return
+-        }
+-
+-        // No cwd: activate running instance or launch fresh
++    /// Bring the app hosting Claude Code sessions to the front: Orca first, VS Code as fallback.
++    private func openHost() {
++        let ids = ["com.stablyai.orca", "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium.codium"]
+         if let running = ids.compactMap({ id in
+             NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
+         }).first {
+             running.activate(options: .activateIgnoringOtherApps)
+             return
+         }
+-        if let appURL = appURL {
++        if let appURL = ids.compactMap({ NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }).first {
+             NSWorkspace.shared.openApplication(at: appURL, configuration: .init(), completionHandler: nil)
+         }
+     }
+diff --git a/NotchBuddy/Sources/App/PillCatalog.swift b/NotchBuddy/Sources/App/PillCatalog.swift
+index 6d9b198..f6f6f16 100644
+--- a/NotchBuddy/Sources/App/PillCatalog.swift
++++ b/NotchBuddy/Sources/App/PillCatalog.swift
+@@ -43,8 +43,8 @@ enum PillCatalog {
+     // All declared pills in display order.
+     static let all: [PillDefinition] = [
+         // ── Where you code ───────────────────────────────────────────────────
+-        .init(id: "integration_claude",  name: "VS Code",     color: "#F5F6F8",
+-              category: .workspace, subtitle: "Integration",  source: .claudeCode),
++        .init(id: "integration_claude",  name: "Orca",        color: "#F5F6F8",
++              category: .workspace, subtitle: "Claude Code host", source: .claudeCode),
+         .init(id: "agent_cursor",        name: "Cursor",      color: "#C0C4CC",
+               category: .workspace, subtitle: "Integration",  source: .agent,  comingSoon: true),
+         .init(id: "agent_codex",         name: "Codex",       color: "#2DD4BF",
