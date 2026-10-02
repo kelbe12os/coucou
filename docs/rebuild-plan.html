@@ -197,10 +197,11 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
       <li>Allow / Deny for Bash from the notch</li>
       <li>Jump to Orca from the Claude pill</li>
       <li>pi workers Orca dispatches: one pill per brief, with phase, note, report and worker_done milestones</li>
+      <li>Chat through your Claude Code login via <code>claude -p</code>, no API key</li>
     </ul></div>
     <div class="scope" style="display:block"><h3>Left out on purpose</h3><ul>
       <li>Gemini CLI and Antigravity hooks</li>
-      <li>Chat, so no Anthropic, OpenAI or Google keys</li>
+      <li>API keys for chat. The patched chat runs the local Claude Code CLI instead</li>
       <li>Stripe, n8n, GitHub, Vercel, Resend, Notion, Cal.com</li>
       <li>Accessibility and browser automation</li>
       <li>pi approvals from the notch. Coucou answers "ask" for every non-Claude agent, so those stay in the pane</li>
@@ -246,7 +247,7 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
         <tr><td>Click pill → focuses</td><td>VS Code</td><td>VS Code</td><td><span class="pill ok">Orca</span></td></tr>
       </tbody>
     </table></div>
-    <p>The patch touches four files. It replaces the two VS Code checks with a small allowlist that includes Orca, makes the Claude pill and the idle card's button focus Orca, renames the idle slot from "VS Code · Integration" to "Orca · Claude Code host", shows hooks status instead of a chat-key status on that card, and starts with no service pills until you check some in Settings. The diff summary is in step 02.</p>
+    <p>The patch touches eight files. It replaces the two VS Code checks with a small allowlist that includes Orca, makes the Claude pill and the idle card's button focus Orca, renames the idle slot to "Orca · Claude Code host", shows hooks status on that card, starts with no service pills, and adds a Claude Code chat provider that runs the local <code>claude -p</code> with your existing login, made the default. The diff summary is in step 02.</p>
   </div>
 </section>
 
@@ -289,10 +290,14 @@ git commit -am "Accept Orca panes as a Claude Code host; focus Orca from the Cla
     <details>
       <summary>coucou-orca.patch, what it changes</summary>
       <pre><code>NotchBuddy/Sources/App/HookServer.swift        | 18 ++++++----   accept Orca panes (allowlist), both gates
-NotchBuddy/Sources/App/IslandViewContent.swift | 34 ++++-------   Claude pill and "Open Orca" focus Orca; hooks status on idle card
+NotchBuddy/Sources/App/IslandViewContent.swift | 35 ++++-------   Claude pill and "Open Orca" focus Orca; hooks status; model picker
 NotchBuddy/Sources/App/PillCatalog.swift       |  4 +-           slot named "Orca · Claude Code host"
-NotchBuddy/Sources/App/AppState.swift          |  3 +-           no service pills by default
-4 files changed, 29 insertions(+), 30 deletions(-)
+NotchBuddy/Sources/App/AppState.swift          | 20 +++++-        no service pills by default; Claude Code chat default + model
+NotchBuddy/Sources/App/ClaudeCodeCLI.swift     | 160 ++++++++++   new: locate and run the local claude CLI headless
+NotchBuddy/Sources/App/ClaudeService.swift     | 93 +++++++       chat and search routed through the CLI, session resume
+NotchBuddy/Sources/App/IslandTypes.swift       |  5 +            ChatProvider.claudeCode
+NotchBuddy/Sources/App/SettingsView.swift      | 42 ++++-         "Claude Code (local)" box; Anthropic key optional
+8 files changed, 345 insertions(+), 33 deletions(-)
 
 <span class="c"># The full diff lives at patches/coucou-orca.patch in the coucou-orca repo.</span></code></pre>
     </details>
@@ -373,7 +378,7 @@ strings -n 6 /Applications/Coucou.app/Contents/MacOS/Coucou | grep -c 'com.stabl
       <thead><tr><th>Prompt</th><th>What it does here</th><th>Decision</th></tr></thead>
       <tbody>
         <tr><td>Automation → Orca</td><td>Clicking the Claude pill brings Orca to the front.</td><td><span class="pill ok">Allow</span> when asked</td></tr>
-        <tr><td>Accessibility</td><td>Window-title capture for chat, plus the Escape and hotkey listeners.</td><td><span class="pill bad">Decline</span>. Chat is out of scope.</td></tr>
+        <tr><td>Accessibility</td><td>Window-title capture for chat context, plus the Escape and hotkey listeners.</td><td><span class="pill bad">Decline</span> unless you want window context in chat.</td></tr>
         <tr><td>Automation → Safari, Chrome, Arc</td><td>Reads the current tab URL for chat context.</td><td><span class="pill bad">Decline</span></td></tr>
         <tr><td>Automation → Mail</td><td>Emails a dropped file.</td><td><span class="pill bad">Decline</span></td></tr>
       </tbody>
@@ -383,7 +388,7 @@ strings -n 6 /Applications/Coucou.app/Contents/MacOS/Coucou | grep -c 'com.stabl
 <span class="c"># want: srw-------</span>
 ls -ld ~/Library/Application\ Support/NotchBuddy ~/Library/Logs/NotchBuddy
 <span class="c"># want: drwx------ on both</span></code></pre>
-    <p>In Settings → Active pills, leave the defaults. Don't open the Gemini CLI or Antigravity sections, and don't enter any API keys.</p>
+    <p>In Settings → Active pills, leave the defaults. Don't open the Gemini CLI or Antigravity sections. No API key is needed: the chat defaults to the "Claude Code (local)" provider, which runs <code>claude -p</code> under your existing login. Open the island, click the speech bubble, and the amber "Claude Code" chip is already selected.</p>
   </div>
 </section>
 
@@ -464,7 +469,7 @@ EOF</code></pre>
       <div class="rule-card"><h3>One card at a time</h3><p>If two Orca panes request permission together, the newer request takes the card and the older one is handed back to its terminal to re-ask. Nothing is auto-approved.</p></div>
       <div class="rule-card"><h3>Workers are their own pills</h3><p>Each pi worker shows as pi-NN-slug with its phase, notes and report as steps. Claude Code's own SubagentStart and SubagentStop events still animate the Claude pill. Watch the tree too: files landing is still the best progress signal.</p></div>
       <div class="rule-card"><h3>Hooks never block Claude</h3><p>If Coucou isn't running, the relay exits in under a second with no output. Quit the app any time without breaking a session.</p></div>
-      <div class="rule-card"><h3>No keys, no uploads</h3><p>With chat and integrations left unconfigured, the app makes no network requests at all. Everything stays on the local socket.</p></div>
+      <div class="rule-card"><h3>Chat is your Claude Code</h3><p>Each message runs the local claude CLI headless with WebSearch, WebFetch and Read allowed, resuming the same session for follow-ups. Dropped files are read by the CLI from disk. No key leaves the machine because there is none.</p></div>
     </div>
   </div>
 </section>
