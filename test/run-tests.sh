@@ -136,7 +136,7 @@ fi
 # 12. patch-new-files: the patch must carry its new Swift files (a commit made with -a once dropped one)
 name="patch-new-files"
 missing=""
-for f in ClaudeCodeCLI.swift; do
+for f in ClaudeCodeCLI.swift ZaiPoller.swift UsageViews.swift RelayServer.swift; do
   grep -qE "^\+\+\+ b/NotchBuddy/Sources/App/$f" "$REPO/patches/coucou-orca.patch" || missing="$missing $f"
 done
 if [ -z "$missing" ]; then pass "$name"; else notok "$name" "patch lacks:$missing"; fi

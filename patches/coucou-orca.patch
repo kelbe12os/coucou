@@ -15,7 +15,7 @@ index 4f0b78b..c66e6ed 100644
  	<true/>
  	<key>NSSupportsAutomaticGraphicsSwitching</key>
 diff --git a/NotchBuddy/Sources/App/AppDelegate.swift b/NotchBuddy/Sources/App/AppDelegate.swift
-index f94af2b..1dfdd44 100644
+index f94af2b..205dbf7 100644
 --- a/NotchBuddy/Sources/App/AppDelegate.swift
 +++ b/NotchBuddy/Sources/App/AppDelegate.swift
 @@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -26,16 +26,17 @@ index f94af2b..1dfdd44 100644
          setupMenuBarItem()
          setupIsland()
      }
-@@ -96,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+@@ -96,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          StripePoller.shared.start()
          CalcomPoller.shared.start()
          NotionPoller.shared.start()
 +        ZaiPoller.shared.start()
++        if AppState.shared.relayEnabled { RelayServer.shared.start(port: UInt16(AppState.shared.relayPort)) }
          NotificationCenter.default.addObserver(self, selector: #selector(openSettings),
                                                 name: .openFullSettings, object: nil)
      }
 diff --git a/NotchBuddy/Sources/App/AppState.swift b/NotchBuddy/Sources/App/AppState.swift
-index 3c1465c..e0a880d 100644
+index 3c1465c..14a9ad6 100644
 --- a/NotchBuddy/Sources/App/AppState.swift
 +++ b/NotchBuddy/Sources/App/AppState.swift
 @@ -60,7 +60,7 @@ final class AppState: ObservableObject {
@@ -107,7 +108,7 @@ index 3c1465c..e0a880d 100644
          didSet {
              if let data = try? JSONEncoder().encode(Array(activeIntegrations)) {
                  UserDefaults.standard.set(data, forKey: "activeIntegrations")
-@@ -202,6 +218,49 @@ final class AppState: ObservableObject {
+@@ -202,6 +218,57 @@ final class AppState: ObservableObject {
          }
      }
  
@@ -154,16 +155,26 @@ index 3c1465c..e0a880d 100644
 +            || zaiUsage.updatedAt != nil
 +    }
 +
++    // MARK: - Remote relay (HTTP bridge for Claude Code sessions on other machines)
++    @Published var relayEnabled: Bool = false {
++        didSet { UserDefaults.standard.set(relayEnabled, forKey: "relayEnabled") }
++    }
++    @Published var relayPort: Int = 6771 {
++        didSet { UserDefaults.standard.set(relayPort, forKey: "relayPort") }
++    }
++
      // Pending API result
      @Published var searchResult: SearchResult? = nil
  
-@@ -251,6 +310,9 @@ final class AppState: ObservableObject {
+@@ -251,6 +318,11 @@ final class AppState: ObservableObject {
          if let v = ud.string(forKey: "chatProvider"), let p = ChatProvider(rawValue: v) { chatProvider = p }
          if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
          if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
 +        if let v = ud.string(forKey: "claudeCodeModel"), !v.isEmpty { claudeCodeModel = v }
 +        if let d = ud.data(forKey: "claudeUsage"),
 +           let u = try? JSONDecoder().decode(ClaudeUsage.self, from: d) { claudeUsage = u }
++        if let v = ud.object(forKey: "relayEnabled") as? Bool { relayEnabled = v }
++        if let v = ud.object(forKey: "relayPort") as? Int, (1024...65535).contains(v) { relayPort = v }
          // Migrate old 60s default → 15s
          if let v = ud.object(forKey: "autoCloseInterval") as? Double {
              autoCloseInterval = (v == 60) ? 15 : v
@@ -505,10 +516,10 @@ index 9a47a33..9d08e06 100644
      static func handle(urls: [URL], state: AppState) async {
          guard let url = urls.first else { return }
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
-index 41b71c0..6dbb654 100644
+index 41b71c0..61111f4 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
 +++ b/NotchBuddy/Sources/App/HookServer.swift
-@@ -158,6 +158,34 @@ final class HookServer: @unchecked Sendable {
+@@ -158,13 +158,44 @@ final class HookServer: @unchecked Sendable {
      // View switches only happen if VS Code (or the agent pill) is currently focused.
      // When not focused: state updates animate the mini bot in the pill; badge shown for alerts.
  
@@ -543,7 +554,18 @@ index 41b71c0..6dbb654 100644
      @MainActor
      private func processEvent(name: String, payload: [String: Any]) {
          let state = AppState.shared
-@@ -176,9 +204,10 @@ final class HookServer: @unchecked Sendable {
+         let sessionId = payload["session_id"] as? String ?? "unknown"
+         let cwd = payload["cwd"] as? String ?? ""
+         let rawName = URL(fileURLWithPath: cwd).lastPathComponent
+-        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        if let host = payload["remote_host"] as? String, !host.isEmpty {
++            projectName += " @ " + host
++        }
+ 
+         // Determine which pill this event belongs to.
+         // coucou_agent must be lowercase, digits and hyphens, ≤ 24 chars.
+@@ -176,9 +207,10 @@ final class HookServer: @unchecked Sendable {
  
          let termProgram = payload["term_program"] as? String ?? ""
          let bundleId    = payload["bundle_id"]    as? String ?? ""
@@ -557,14 +579,14 @@ index 41b71c0..6dbb654 100644
          guard isExternalAgent || isVSCode else {
              nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
              return
-@@ -339,6 +368,16 @@ final class HookServer: @unchecked Sendable {
+@@ -339,6 +371,16 @@ final class HookServer: @unchecked Sendable {
          // Already compact and non-alert: Mochi state update is enough, no expand
      }
  
 +    /// Terminals whose Claude Code sessions show in the island and get approval cards.
 +    /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
 +    /// bundle com.stablyai.orca) and Ghostty. Add more tokens here to support other terminals.
-+    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca", "ghostty"]
++    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca", "ghostty", "remote"]
 +
 +    static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
 +        let t = termProgram.lowercased(), b = bundleId.lowercased()
@@ -574,7 +596,19 @@ index 41b71c0..6dbb654 100644
      // MARK: - Permission request (blocking — Claude Code waits for decision)
  
      @MainActor
-@@ -364,8 +403,7 @@ final class HookServer: @unchecked Sendable {
+@@ -347,7 +389,10 @@ final class HookServer: @unchecked Sendable {
+         let sessionId = payload["session_id"] as? String ?? "unknown"
+         let cwd       = payload["cwd"]        as? String ?? ""
+         let rawName   = URL(fileURLWithPath: cwd).lastPathComponent
+-        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
++        if let host = payload["remote_host"] as? String, !host.isEmpty {
++            projectName += " @ " + host
++        }
+ 
+         // External agents (coucou_agent) do not yet get an approval card — answering
+         // would show a card that looks like a Claude Code request. Reply immediately
+@@ -364,8 +409,7 @@ final class HookServer: @unchecked Sendable {
  
          let termProgram = payload["term_program"] as? String ?? ""
          let bundleId    = payload["bundle_id"]    as? String ?? ""
@@ -584,7 +618,7 @@ index 41b71c0..6dbb654 100644
          guard isVSCode else {
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
-@@ -498,19 +536,20 @@ final class HookServer: @unchecked Sendable {
+@@ -498,19 +542,20 @@ final class HookServer: @unchecked Sendable {
      // MARK: - French step labels
  
      private func frenchStep(tool: String, input: [String: Any]) -> String {
@@ -616,7 +650,7 @@ index 41b71c0..6dbb654 100644
              "NotebookEdit": "Notebook",
          ]
          let label = labels[tool] ?? tool
-@@ -563,11 +602,35 @@ final class HookServer: @unchecked Sendable {
+@@ -563,11 +608,35 @@ final class HookServer: @unchecked Sendable {
          let pyURL = wrapperURL.deletingLastPathComponent().appendingPathComponent("nb-hook.py")
          try? nbHookPythonGitHub.write(to: pyURL, atomically: true, encoding: .utf8)
          _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: pyURL.path)
@@ -652,7 +686,7 @@ index 41b71c0..6dbb654 100644
      /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
      static func hooksNeedUpdate() -> Bool {
          let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-@@ -681,6 +744,81 @@ final class HookServer: @unchecked Sendable {
+@@ -681,6 +750,81 @@ final class HookServer: @unchecked Sendable {
          try newData.write(to: settingsURL, options: .atomic)
      }
  
@@ -734,7 +768,7 @@ index 41b71c0..6dbb654 100644
      // MARK: - App Store: hooks via security-scoped bookmark
  
      #if APPSTORE
-@@ -1394,3 +1532,83 @@ def main():
+@@ -1394,3 +1538,83 @@ def main():
  main()
  sys.exit(0)
  """
@@ -1055,8 +1089,314 @@ index 6d9b198..f6f6f16 100644
          .init(id: "agent_cursor",        name: "Cursor",      color: "#C0C4CC",
                category: .workspace, subtitle: "Integration",  source: .agent,  comingSoon: true),
          .init(id: "agent_codex",         name: "Codex",       color: "#2DD4BF",
+diff --git a/NotchBuddy/Sources/App/RelayServer.swift b/NotchBuddy/Sources/App/RelayServer.swift
+new file mode 100644
+index 0000000..cab790b
+--- /dev/null
++++ b/NotchBuddy/Sources/App/RelayServer.swift
+@@ -0,0 +1,300 @@
++import Foundation
++import Network
++import Security
++
++/// HTTP bridge for Claude Code sessions on other machines. A remote hook relay POSTs the same
++/// JSON object the local Unix socket accepts; this server forwards it to the socket and returns
++/// the socket's reply, so approvals block and resolve exactly like local ones.
++final class RelayServer: @unchecked Sendable {
++    static let shared = RelayServer()
++
++    private let queue = DispatchQueue(label: "coucou.relay", qos: .userInitiated)
++    private var listener: NWListener?
++    private var active = 0
++
++    private static let maxActive = 32
++    private static let maxHeader = 65_536
++    private static let maxBody = 1_048_576
++    private static let requestTimeout: TimeInterval = 15
++    private static let bridgeTimeout: TimeInterval = 122
++
++    private init() {}
++
++    // MARK: - Token
++
++    static var tokenURL: URL { HookServer.supportDir.appendingPathComponent("relay-token") }
++
++    static func token() -> String {
++        if let t = try? String(contentsOf: tokenURL, encoding: .utf8) {
++            let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
++            if trimmed.count >= 16 { return trimmed }
++        }
++        return regenerateToken()
++    }
++
++    @discardableResult
++    static func regenerateToken() -> String {
++        var bytes = [UInt8](repeating: 0, count: 24)
++        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
++        let t = bytes.map { String(format: "%02x", $0) }.joined()
++        try? FileManager.default.createDirectory(at: HookServer.supportDir, withIntermediateDirectories: true)
++        try? t.write(to: tokenURL, atomically: true, encoding: .utf8)
++        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o600 as NSNumber], ofItemAtPath: tokenURL.path)
++        return t
++    }
++
++    /// The Mac's MagicDNS name from the Tailscale CLI, if installed and running. Blocking; call off the main actor.
++    static func tailnetName() -> String? {
++        let candidates = ["/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale",
++                          "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
++        guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return nil }
++        let p = Process()
++        p.executableURL = URL(fileURLWithPath: bin)
++        p.arguments = ["status", "--json"]
++        let out = Pipe()
++        p.standardOutput = out
++        p.standardError = FileHandle.nullDevice
++        guard (try? p.run()) != nil else { return nil }
++        let data = out.fileHandleForReading.readDataToEndOfFile()
++        p.waitUntilExit()
++        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let me = json["Self"] as? [String: Any],
++              let dns = me["DNSName"] as? String, !dns.isEmpty else { return nil }
++        let state = json["BackendState"] as? String ?? ""
++        let name = dns.hasSuffix(".") ? String(dns.dropLast()) : dns
++        return state == "Running" ? name : name + " (Tailscale stopped)"
++    }
++
++    // MARK: - Lifecycle
++
++    func start(port: UInt16) { queue.async { self.startLocked(port: port) } }
++    func stop() { queue.async { self.listener?.cancel(); self.listener = nil } }
++    func restart(port: UInt16) { queue.async { self.listener?.cancel(); self.listener = nil; self.startLocked(port: port) } }
++
++    private func startLocked(port: UInt16) {
++        guard listener == nil, let nwPort = NWEndpoint.Port(rawValue: port) else { return }
++        let params = NWParameters.tcp
++        params.allowLocalEndpointReuse = true
++        guard let l = try? NWListener(using: params, on: nwPort) else {
++            appendAppLog("nb.log", "Relay: cannot listen on \(port)")
++            return
++        }
++        l.stateUpdateHandler = { state in
++            switch state {
++            case .ready: appendAppLog("nb.log", "Relay listening on port \(port)")
++            case .failed(let err): appendAppLog("nb.log", "Relay failed: \(err)")
++            default: break
++            }
++        }
++        l.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
++        l.start(queue: queue)
++        listener = l
++    }
++
++    // MARK: - Connections
++
++    private final class Request: @unchecked Sendable {
++        var buffer = Data()
++        var headerEnd: Int? = nil
++        var method = ""
++        var path = ""
++        var headers: [String: String] = [:]
++        var contentLength = 0
++        var finished = false
++        var released = false
++    }
++
++    private func accept(_ conn: NWConnection) {
++        guard active < Self.maxActive else { conn.cancel(); return }
++        active += 1
++        let req = Request()
++        conn.stateUpdateHandler = { [weak self] state in
++            if case .cancelled = state { self?.release(req) }
++            if case .failed = state { conn.cancel() }
++        }
++        conn.start(queue: queue)
++        queue.asyncAfter(deadline: .now() + Self.requestTimeout) { [weak self] in
++            guard let self, !req.finished else { return }
++            req.finished = true
++            self.respond(conn, 408, #"{"error":"request timeout"}"#)
++        }
++        receive(conn, req)
++    }
++
++    private func release(_ req: Request) {
++        guard !req.released else { return }
++        req.released = true
++        active = max(0, active - 1)
++    }
++
++    private func receive(_ conn: NWConnection, _ req: Request) {
++        conn.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
++            guard let self, !req.finished else { return }
++            if let data { req.buffer.append(data) }
++            if error != nil { req.finished = true; conn.cancel(); return }
++            if req.headerEnd == nil {
++                if let range = req.buffer.range(of: Data("\r\n\r\n".utf8)) {
++                    req.headerEnd = range.upperBound
++                    guard self.parseHead(req) else {
++                        req.finished = true
++                        self.respond(conn, 400, #"{"error":"bad request"}"#)
++                        return
++                    }
++                } else if req.buffer.count > Self.maxHeader {
++                    req.finished = true
++                    self.respond(conn, 431, #"{"error":"headers too large"}"#)
++                    return
++                }
++            }
++            if let end = req.headerEnd {
++                if req.contentLength > Self.maxBody {
++                    req.finished = true
++                    self.respond(conn, 413, #"{"error":"body too large"}"#)
++                    return
++                }
++                if req.buffer.count - end >= req.contentLength {
++                    req.finished = true
++                    let body = req.buffer.subdata(in: end..<(end + req.contentLength))
++                    self.route(conn, req, body: body)
++                    return
++                }
++            }
++            if isComplete { req.finished = true; conn.cancel(); return }
++            self.receive(conn, req)
++        }
++    }
++
++    private func parseHead(_ req: Request) -> Bool {
++        guard let end = req.headerEnd,
++              let head = String(data: req.buffer.prefix(end), encoding: .utf8) else { return false }
++        let lines = head.components(separatedBy: "\r\n").filter { !$0.isEmpty }
++        guard let requestLine = lines.first else { return false }
++        let parts = requestLine.split(separator: " ")
++        guard parts.count >= 2 else { return false }
++        req.method = String(parts[0]).uppercased()
++        req.path = String(parts[1])
++        for line in lines.dropFirst() {
++            guard let colon = line.firstIndex(of: ":") else { continue }
++            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
++            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
++            req.headers[name] = value
++        }
++        req.contentLength = Int(req.headers["content-length"] ?? "0") ?? 0
++        return true
++    }
++
++    // MARK: - Routing
++
++    private func route(_ conn: NWConnection, _ req: Request, body: Data) {
++        let auth = req.headers["authorization"] ?? ""
++        guard auth == "Bearer \(Self.token())" else {
++            appendAppLog("nb.log", "Relay: rejected \(req.method) \(req.path) (bad token)")
++            respond(conn, 401, #"{"error":"unauthorized"}"#)
++            return
++        }
++        switch (req.method, req.path) {
++        case ("GET", "/health"):
++            respond(conn, 200, #"{"ok":true,"app":"coucou"}"#)
++        case ("POST", "/hook"):
++            guard let obj = try? JSONSerialization.jsonObject(with: body), obj is [String: Any] else {
++                appendAppLog("nb.log", "Relay: rejected POST /hook (not a JSON object)")
++                respond(conn, 400, #"{"error":"body must be a JSON object"}"#)
++                return
++            }
++            bridge(body, to: conn)
++        default:
++            respond(conn, 404, #"{"error":"not found"}"#)
++        }
++    }
++
++    // MARK: - Bridge to the Unix socket
++
++    private final class Flag: @unchecked Sendable { var done = false }
++    private final class TimeoutBox: @unchecked Sendable {
++        let work: DispatchWorkItem
++        init(_ work: DispatchWorkItem) { self.work = work }
++    }
++
++    private func bridge(_ body: Data, to conn: NWConnection) {
++        let sock = NWConnection(to: .unix(path: HookServer.socketPath), using: .tcp)
++        let flag = Flag()
++        let timeout = DispatchWorkItem { [weak self] in
++            guard !flag.done else { return }
++            flag.done = true
++            sock.cancel()
++            self?.respond(conn, 504, #"{"permissionDecision":"ask","error":"timeout"}"#)
++        }
++        let timeoutBox = TimeoutBox(timeout)
++        queue.asyncAfter(deadline: .now() + Self.bridgeTimeout, execute: timeout)
++
++        sock.stateUpdateHandler = { [weak self] state in
++            guard let self else { return }
++            switch state {
++            case .ready:
++                var line = body
++                line.append(0x0A)
++                sock.send(content: line, completion: .contentProcessed { err in
++                    if err != nil, !flag.done {
++                        flag.done = true; timeoutBox.work.cancel(); sock.cancel()
++                        self.respond(conn, 502, #"{"error":"socket write failed"}"#)
++                        return
++                    }
++                    self.readLine(sock, Data()) { reply in
++                        guard !flag.done else { return }
++                        flag.done = true; timeoutBox.work.cancel(); sock.cancel()
++                        self.respond(conn, 200, reply ?? #"{"ok":true}"#)
++                    }
++                })
++            case .failed, .waiting:
++                guard !flag.done else { return }
++                flag.done = true; timeoutBox.work.cancel(); sock.cancel()
++                self.respond(conn, 502, #"{"error":"coucou socket unavailable"}"#)
++            default:
++                break
++            }
++        }
++        sock.start(queue: queue)
++    }
++
++    private func readLine(_ sock: NWConnection, _ acc: Data, _ done: @escaping @Sendable (String?) -> Void) {
++        sock.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
++            var acc = acc
++            if let data { acc.append(data) }
++            if let nl = acc.firstIndex(of: 0x0A) {
++                done(String(data: acc.prefix(upTo: nl), encoding: .utf8))
++                return
++            }
++            if error != nil || isComplete {
++                done(acc.isEmpty ? nil : String(data: acc, encoding: .utf8))
++                return
++            }
++            self?.readLine(sock, acc, done)
++        }
++    }
++
++    // MARK: - Response
++
++    private func respond(_ conn: NWConnection, _ status: Int, _ body: String) {
++        let reason: String
++        switch status {
++        case 200: reason = "OK"
++        case 400: reason = "Bad Request"
++        case 401: reason = "Unauthorized"
++        case 404: reason = "Not Found"
++        case 408: reason = "Request Timeout"
++        case 413: reason = "Payload Too Large"
++        case 431: reason = "Request Header Fields Too Large"
++        case 502: reason = "Bad Gateway"
++        case 504: reason = "Gateway Timeout"
++        default:  reason = "Error"
++        }
++        let bodyData = Data(body.utf8)
++        var head = "HTTP/1.1 \(status) \(reason)\r\n"
++        head += "Content-Type: application/json\r\n"
++        head += "Content-Length: \(bodyData.count)\r\n"
++        head += "Connection: close\r\n\r\n"
++        var out = Data(head.utf8)
++        out.append(bodyData)
++        conn.send(content: out, completion: .contentProcessed { _ in conn.cancel() })
++    }
++}
 diff --git a/NotchBuddy/Sources/App/SettingsView.swift b/NotchBuddy/Sources/App/SettingsView.swift
-index f9ee07e..7300cf2 100644
+index f9ee07e..a67bfa9 100644
 --- a/NotchBuddy/Sources/App/SettingsView.swift
 +++ b/NotchBuddy/Sources/App/SettingsView.swift
 @@ -5,6 +5,8 @@ import AppKit
@@ -1068,7 +1408,7 @@ index f9ee07e..7300cf2 100644
  
      // Claude model — dynamic list fetched from the API, static fallback if unavailable
      private static let fallbackModels: [(id: String, label: String)] = [
-@@ -31,6 +33,40 @@ struct SettingsView: View {
+@@ -31,6 +33,79 @@ struct SettingsView: View {
      @State private var showDiff: Bool = false
      @State private var pendingHookJSON: String = ""
      @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
@@ -1076,6 +1416,10 @@ index f9ee07e..7300cf2 100644
 +    @State private var relayInstalled: Bool = HookServer.statusLineRelayInstalled()
 +    @State private var zaiKey: String = ZaiKey.resolve()?.key ?? ""
 +    @State private var zaiKeySource: String? = ZaiKey.resolve()?.source
++    @State private var relayToken: String = RelayServer.token()
++    @State private var relayTailnetName: String = ""
++    @State private var relayTestResult: String = ""
++    @State private var relayPortText: String = String(AppState.shared.relayPort)
 +
 +    private func confirmRelayInstall() {
 +        let alert = NSAlert()
@@ -1106,10 +1450,45 @@ index f9ee07e..7300cf2 100644
 +        zaiKeySource = r?.source
 +        zaiKey = r?.key ?? ""
 +    }
++
++    private func applyRelayPort() {
++        guard let p = Int(relayPortText), (1024...65535).contains(p) else {
++            statusMessage = "❌ Port must be between 1024 and 65535."; return
++        }
++        state.relayPort = p
++        if state.relayEnabled { RelayServer.shared.restart(port: UInt16(p)) }
++        statusMessage = "✓ Relay port set to \(p)."
++    }
++
++    private func testRelay() {
++        guard state.relayEnabled else { relayTestResult = "relay is off"; return }
++        let port = state.relayPort
++        let token = relayToken
++        relayTestResult = "testing…"
++        Task {
++            guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return }
++            var req = URLRequest(url: url, timeoutInterval: 5)
++            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
++            do {
++                let (data, resp) = try await URLSession.shared.data(for: req)
++                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
++                relayTestResult = code == 200 ? "ok: \(String(data: data, encoding: .utf8) ?? "")" : "HTTP \(code)"
++            } catch {
++                relayTestResult = "failed: \(error.localizedDescription)"
++            }
++        }
++    }
++
++    private func lookupTailnetName() {
++        Task.detached {
++            let name = RelayServer.tailnetName() ?? "Tailscale not running or CLI not found"
++            await MainActor.run { relayTailnetName = name }
++        }
++    }
  
      #if !APPSTORE
      @State private var geminiHooksInstalled: Bool = HookServer.geminiHooksInstalled()
-@@ -79,12 +115,48 @@ struct SettingsView: View {
+@@ -79,12 +154,48 @@ struct SettingsView: View {
          )
      }
  
@@ -1159,7 +1538,7 @@ index f9ee07e..7300cf2 100644
                      VStack(alignment: .leading, spacing: 8) {
                          SecureField("API key (sk-ant-…)", text: $apiKey)
                              .textFieldStyle(.roundedBorder)
-@@ -116,7 +188,7 @@ struct SettingsView: View {
+@@ -116,7 +227,7 @@ struct SettingsView: View {
                                  .onChange(of: customModel) { _, value in applyCustomModel(value) }
                          }
  
@@ -1168,7 +1547,7 @@ index f9ee07e..7300cf2 100644
                              .font(.system(size: 11))
                              .foregroundColor(.secondary)
                      }
-@@ -161,6 +233,15 @@ struct SettingsView: View {
+@@ -161,6 +272,15 @@ struct SettingsView: View {
                  // MARK: Hooks
                  GroupBox("Claude Code Hooks") {
                      VStack(alignment: .leading, spacing: 10) {
@@ -1184,8 +1563,58 @@ index f9ee07e..7300cf2 100644
                          if hookNeedsUpdate {
                              HStack(spacing: 6) {
                                  Image(systemName: "exclamationmark.triangle.fill")
-@@ -222,6 +303,67 @@ struct SettingsView: View {
+@@ -220,8 +340,117 @@ struct SettingsView: View {
+                     .padding(6)
+                 }
  
++                GroupBox("Remote sessions") {
++                    VStack(alignment: .leading, spacing: 10) {
++                        Text("Claude Code sessions on other machines reach the notch through this relay. Each event is forwarded to Coucou over HTTP with a token; approvals work the same as local ones.")
++                            .font(.system(size: 12)).foregroundColor(.secondary)
++                        Toggle("Enable relay", isOn: $state.relayEnabled)
++                            .onChange(of: state.relayEnabled) { _, on in
++                                if on { RelayServer.shared.start(port: UInt16(state.relayPort)) } else { RelayServer.shared.stop() }
++                                relayTestResult = ""
++                            }
++                        HStack(spacing: 8) {
++                            Text("Port").font(.system(size: 12))
++                            TextField("6771", text: $relayPortText)
++                                .textFieldStyle(.roundedBorder).frame(width: 80)
++                                .onSubmit { applyRelayPort() }
++                            Button("Apply") { applyRelayPort() }
++                        }
++                        HStack(spacing: 8) {
++                            Text("Token").font(.system(size: 12))
++                            Text(relayToken).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
++                            Button("Copy") {
++                                NSPasteboard.general.clearContents()
++                                NSPasteboard.general.setString(relayToken, forType: .string)
++                                statusMessage = "✓ Token copied."
++                            }
++                            Button("Regenerate") {
++                                relayToken = RelayServer.regenerateToken()
++                                statusMessage = "✓ New token. Update the remote machines."
++                            }
++                        }
++                        VStack(alignment: .leading, spacing: 2) {
++                            Text("This Mac on the LAN: \(ProcessInfo.processInfo.hostName)")
++                                .font(.system(size: 11, design: .monospaced))
++                            Text("On the tailnet: \(relayTailnetName.isEmpty ? "looking up…" : relayTailnetName)")
++                                .font(.system(size: 11, design: .monospaced))
++                        }
++                        HStack(spacing: 10) {
++                            Button("Test") { testRelay() }
++                            if !relayTestResult.isEmpty {
++                                Text(relayTestResult).font(.system(size: 11)).foregroundColor(.secondary)
++                            }
++                        }
++                        Text("Remote install: scripts/remote/ in the coucou-orca repo. Point it at one of the names above, this port and the token.")
++                            .font(.system(size: 10.5)).foregroundColor(.secondary)
++                    }
++                    .padding(6)
++                }
++                .task { lookupTailnetName() }
++
                  // MARK: Gemini CLI Hooks / Antigravity Hooks
                  #if !APPSTORE
 +                GroupBox("Usage card") {
@@ -1252,7 +1681,7 @@ index f9ee07e..7300cf2 100644
                  GroupBox("Gemini CLI Hooks") {
                      VStack(alignment: .leading, spacing: 10) {
                          Text(geminiHooksInstalled
-@@ -633,6 +775,7 @@ struct SettingsView: View {
+@@ -633,6 +862,7 @@ struct SettingsView: View {
              statusMessage = "✓ Hooks installed in ~/.claude/settings.json"
              pendingHookJSON = ""
              hookNeedsUpdate = false
@@ -1260,7 +1689,7 @@ index f9ee07e..7300cf2 100644
          } catch {
              statusMessage = "❌ Write error: \(error.localizedDescription)"
          }
-@@ -642,6 +785,7 @@ struct SettingsView: View {
+@@ -642,6 +872,7 @@ struct SettingsView: View {
          do {
              try HookServer.shared.uninstallClaudeHooks()
              statusMessage = "✓ Hooks removed."
