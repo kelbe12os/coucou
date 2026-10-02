@@ -34,10 +34,12 @@ CONF="$DEST/relay.conf"
 SETTINGS="$HOME/.claude/settings.json"
 
 json_tool() {
-  # Windows ships a python3 stub that only opens the Store, so test that it really runs.
-  if python3 -c 'import json' >/dev/null 2>&1; then echo python3
-  elif command -v powershell.exe >/dev/null 2>&1; then echo powershell
-  else echo none; fi
+  # Prefer a real Python ("python3" on Linux, usually "python" on Windows; the Windows "python3"
+  # is a Store stub that only prints a message, so each candidate must actually run).
+  for py in python3 python; do
+    if "$py" -c 'import json' >/dev/null 2>&1; then echo "$py"; return; fi
+  done
+  if command -v powershell.exe >/dev/null 2>&1; then echo powershell; else echo none; fi
 }
 
 merge_hooks() {  # $1 = install|uninstall
@@ -46,8 +48,8 @@ merge_hooks() {  # $1 = install|uninstall
   mkdir -p "$HOME/.claude"
   [ -f "$SETTINGS" ] || printf '{}\n' > "$SETTINGS"
   cp "$SETTINGS" "$SETTINGS.bak-coucou-$(date +%Y%m%d-%H%M)"
-  if [ "$tool" = python3 ]; then
-    python3 - "$SETTINGS" "$HOOK" "$1" <<'PY'
+  if [ "$tool" != powershell ]; then
+    "$tool" - "$SETTINGS" "$HOOK" "$1" <<'PY'
 import json, sys
 path, hook, mode = sys.argv[1], sys.argv[2], sys.argv[3]
 events = [("SessionStart",10),("SessionEnd",10),("UserPromptSubmit",10),("PreToolUse",10),

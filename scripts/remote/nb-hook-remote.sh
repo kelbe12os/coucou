@@ -59,13 +59,14 @@ decision=$(printf '%s' "$resp" | sed -n 's/.*"permissionDecision"[[:space:]]*:[[
 
 emit_always() {
   # Carry Claude's suggested rules so "Always" persists, when a JSON-capable runtime exists.
-  if python3 -c 'import json' >/dev/null 2>&1; then
-    printf '%s' "$payload" | python3 -c '
+  for py in python3 python; do
+    "$py" -c 'import json' >/dev/null 2>&1 || continue
+    printf '%s' "$payload" | "$py" -c '
 import json, sys
 p = json.load(sys.stdin)
 print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
   "decision": {"behavior": "allow", "updatedPermissions": p.get("permission_suggestions", [])}}}))' 2>/dev/null && return 0
-  fi
+  done
   if command -v powershell.exe >/dev/null 2>&1; then
     printf '%s' "$payload" | powershell.exe -NoProfile -NonInteractive -Command '
 $p = [Console]::In.ReadToEnd() | ConvertFrom-Json
