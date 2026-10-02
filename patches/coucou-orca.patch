@@ -1,5 +1,17 @@
+diff --git a/NotchBuddy/Sources/App/AppDelegate.swift b/NotchBuddy/Sources/App/AppDelegate.swift
+index f94af2b..317034a 100644
+--- a/NotchBuddy/Sources/App/AppDelegate.swift
++++ b/NotchBuddy/Sources/App/AppDelegate.swift
+@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
+         StripePoller.shared.start()
+         CalcomPoller.shared.start()
+         NotionPoller.shared.start()
++        ZaiPoller.shared.start()
+         NotificationCenter.default.addObserver(self, selector: #selector(openSettings),
+                                                name: .openFullSettings, object: nil)
+     }
 diff --git a/NotchBuddy/Sources/App/AppState.swift b/NotchBuddy/Sources/App/AppState.swift
-index 3c1465c..2eb6114 100644
+index 3c1465c..5fe0458 100644
 --- a/NotchBuddy/Sources/App/AppState.swift
 +++ b/NotchBuddy/Sources/App/AppState.swift
 @@ -60,7 +60,7 @@ final class AppState: ObservableObject {
@@ -71,19 +83,245 @@ index 3c1465c..2eb6114 100644
          didSet {
              if let data = try? JSONEncoder().encode(Array(activeIntegrations)) {
                  UserDefaults.standard.set(data, forKey: "activeIntegrations")
-@@ -251,6 +267,7 @@ final class AppState: ObservableObject {
+@@ -202,6 +218,49 @@ final class AppState: ObservableObject {
+         }
+     }
+ 
++    // MARK: - Usage (Claude Code rate limits via status-line relay; Z.ai GLM quota via poller)
++
++    struct ClaudeUsage: Codable, Equatable {
++        var fiveHourPct: Int? = nil
++        var fiveHourResetsAt: Date? = nil
++        var sevenDayPct: Int? = nil
++        var sevenDayResetsAt: Date? = nil
++        var contextPct: Int? = nil        // for the most recently reporting session
++        var contextSessionId: String? = nil
++        var costUSD: Double? = nil
++        var model: String? = nil
++        var updatedAt: Date? = nil
++        var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 600 } ?? true }
++    }
++
++    struct ZaiUsage: Equatable {
++        var fiveHourPct: Int? = nil
++        var fiveHourResetsAt: Date? = nil
++        var weeklyPct: Int? = nil
++        var weeklyResetsAt: Date? = nil
++        var level: String? = nil
++        var updatedAt: Date? = nil
++        var error: String? = nil
++        var isStale: Bool { updatedAt.map { Date().timeIntervalSince($0) > 600 } ?? true }
++    }
++
++    @Published var claudeUsage: ClaudeUsage = ClaudeUsage() {
++        didSet {
++            if let data = try? JSONEncoder().encode(claudeUsage) {
++                UserDefaults.standard.set(data, forKey: "claudeUsage")
++            }
++        }
++    }
++    @Published var zaiUsage: ZaiUsage = ZaiUsage()
++
++    /// True when the right panel should carry the usage card or strip.
++    var usageConfigured: Bool {
++        HookServer.statusLineRelayInstalled()
++            || !(KeychainStore.shared.get("zai-api-key") ?? "").isEmpty
++            || claudeUsage.updatedAt != nil
++            || zaiUsage.updatedAt != nil
++    }
++
+     // Pending API result
+     @Published var searchResult: SearchResult? = nil
+ 
+@@ -251,6 +310,9 @@ final class AppState: ObservableObject {
          if let v = ud.string(forKey: "chatProvider"), let p = ChatProvider(rawValue: v) { chatProvider = p }
          if let v = ud.string(forKey: "googleChatModel"), !v.isEmpty { googleChatModel = v }
          if let v = ud.string(forKey: "openAIChatModel"), !v.isEmpty { openAIChatModel = v }
 +        if let v = ud.string(forKey: "claudeCodeModel"), !v.isEmpty { claudeCodeModel = v }
++        if let d = ud.data(forKey: "claudeUsage"),
++           let u = try? JSONDecoder().decode(ClaudeUsage.self, from: d) { claudeUsage = u }
          // Migrate old 60s default → 15s
          if let v = ud.object(forKey: "autoCloseInterval") as? Double {
              autoCloseInterval = (v == 60) ? 15 : v
+diff --git a/NotchBuddy/Sources/App/ClaudeCodeCLI.swift b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
+new file mode 100644
+index 0000000..ff9fbb3
+--- /dev/null
++++ b/NotchBuddy/Sources/App/ClaudeCodeCLI.swift
+@@ -0,0 +1,160 @@
++import Foundation
++
++/// Runs the locally installed Claude Code CLI in headless mode (`claude -p`) so the chat uses the
++/// user's Claude Code login instead of an API key. Everything here is nonisolated and Sendable;
++/// callers are @MainActor and await the result.
++enum ClaudeCodeCLI {
++
++    struct Output: Sendable {
++        let text: String
++        let sessionId: String?
++        let isError: Bool
++    }
++
++    /// Model choices offered in the picker and in Settings. "default" means: do not pass --model,
++    /// so Claude Code uses whatever the user configured for the CLI itself.
++    static let modelChoices: [(id: String, label: String)] = [
++        ("default", "Default (your Claude Code setting)"),
++        ("opus",    "Opus"),
++        ("sonnet",  "Sonnet"),
++        ("haiku",   "Haiku"),
++    ]
++
++    /// First executable `claude` found. $COUCOU_CLAUDE_BIN wins; then the usual install paths.
++    static func locate() -> String? {
++        let fm = FileManager.default
++        let env = ProcessInfo.processInfo.environment
++        if let p = env["COUCOU_CLAUDE_BIN"], fm.isExecutableFile(atPath: p) { return p }
++        let home = NSHomeDirectory()
++        var candidates = [
++            "\(home)/.local/bin/claude",
++            "/opt/homebrew/bin/claude",
++            "/usr/local/bin/claude",
++            "\(home)/.claude/local/claude",
++            "\(home)/.bun/bin/claude",
++            "\(home)/.npm-global/bin/claude",
++        ]
++        if let nodes = try? fm.contentsOfDirectory(atPath: "\(home)/.nvm/versions/node") {
++            candidates += nodes.sorted().reversed().map { "\(home)/.nvm/versions/node/\($0)/bin/claude" }
++        }
++        return candidates.first { fm.isExecutableFile(atPath: $0) }
++    }
++
++    /// `claude --version`, first line, or nil when the binary is missing or does not answer in 10 s.
++    static func version() async -> String? {
++        guard let bin = locate() else { return nil }
++        guard let r = try? await execute(bin: bin, args: ["--version"], cwd: nil, timeout: 10) else { return nil }
++        return r.stdout.split(separator: "\n").first.map { String($0).trimmingCharacters(in: .whitespaces) }
++    }
++
++    /// One headless turn. Pass `resumeSessionId` to continue a conversation.
++    static func run(prompt: String, systemPrompt: String, model: String?, resumeSessionId: String?,
++                    addDirs: [String], cwd: String?, timeout: TimeInterval = 120) async throws -> Output {
++        guard let bin = locate() else {
++            throw failure("Claude Code CLI not found. Install Claude Code, or set COUCOU_CLAUDE_BIN.")
++        }
++        var args = ["-p", prompt,
++                    "--output-format", "json",
++                    "--allowedTools", "WebSearch,WebFetch,Read",
++                    "--append-system-prompt", systemPrompt]
++        if let m = model, !m.isEmpty, m != "default" { args += ["--model", m] }
++        if let s = resumeSessionId, !s.isEmpty { args += ["--resume", s] }
++        for d in addDirs { args += ["--add-dir", d] }
++
++        let r = try await execute(bin: bin, args: args, cwd: cwd, timeout: timeout)
++        if r.timedOut {
++            throw failure("Claude Code did not answer within \(Int(timeout)) s.")
++        }
++        guard let data = r.stdout.data(using: .utf8),
++              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
++            let tail = String((r.stderr.isEmpty ? r.stdout : r.stderr).suffix(300))
++                .trimmingCharacters(in: .whitespacesAndNewlines)
++            throw failure(tail.isEmpty ? "Claude Code returned no output (exit \(r.status))." : tail)
++        }
++        let text = (json["result"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++        let isError = (json["is_error"] as? Bool ?? false) || r.status != 0
++        return Output(text: text, sessionId: json["session_id"] as? String, isError: isError)
++    }
++
++    // MARK: - Process plumbing
++
++    private struct Exec: Sendable {
++        let status: Int32
++        let stdout: String
++        let stderr: String
++        let timedOut: Bool
++    }
++
++    private final class DataBox: @unchecked Sendable {
++        var data = Data()
++    }
++
++    private static func execute(bin: String, args: [String], cwd: String?, timeout: TimeInterval) async throws -> Exec {
++        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Exec, Error>) in
++            DispatchQueue.global(qos: .userInitiated).async {
++                let p = Process()
++                p.executableURL = URL(fileURLWithPath: bin)
++                p.arguments = args
++
++                // The CLI finds its Keychain login through USER/LOGNAME and HOME; a GUI app has
++                // them, but set them explicitly so a missing one can never show up as "Not logged in".
++                var env = ProcessInfo.processInfo.environment
++                if env["HOME"] == nil { env["HOME"] = NSHomeDirectory() }
++                if env["USER"] == nil { env["USER"] = NSUserName() }
++                if env["LOGNAME"] == nil { env["LOGNAME"] = NSUserName() }
++                let binDir = (bin as NSString).deletingLastPathComponent
++                let basePath = [binDir, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"].joined(separator: ":")
++                env["PATH"] = env["PATH"].map { basePath + ":" + $0 } ?? basePath
++                for k in env.keys where k.hasPrefix("CLAUDE_CODE_") { env.removeValue(forKey: k) }
++                p.environment = env
++                p.currentDirectoryURL = URL(fileURLWithPath: cwd ?? NSHomeDirectory())
++
++                let outPipe = Pipe()
++                let errPipe = Pipe()
++                p.standardOutput = outPipe
++                p.standardError = errPipe
++                p.standardInput = FileHandle.nullDevice
++
++                do {
++                    try p.run()
++                } catch {
++                    cont.resume(throwing: error)
++                    return
++                }
++
++                let timedOut = DataBox()
++                let killer = DispatchWorkItem {
++                    if p.isRunning {
++                        timedOut.data = Data([1])
++                        p.terminate()
++                    }
++                }
++                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
++
++                // Drain stderr concurrently so a chatty child can never block on a full pipe.
++                let errBox = DataBox()
++                let group = DispatchGroup()
++                group.enter()
++                let errHandle = errPipe.fileHandleForReading
++                DispatchQueue.global().async {
++                    errBox.data = errHandle.readDataToEndOfFile()
++                    group.leave()
++                }
++                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
++                group.wait()
++                p.waitUntilExit()
++                killer.cancel()
++
++                cont.resume(returning: Exec(
++                    status: p.terminationStatus,
++                    stdout: String(data: outData, encoding: .utf8) ?? "",
++                    stderr: String(data: errBox.data, encoding: .utf8) ?? "",
++                    timedOut: !timedOut.data.isEmpty))
++            }
++        }
++    }
++
++    private static func failure(_ message: String) -> NSError {
++        NSError(domain: "ClaudeCodeCLI", code: 0, userInfo: [NSLocalizedDescriptionKey: message])
++    }
++}
 diff --git a/NotchBuddy/Sources/App/ClaudeService.swift b/NotchBuddy/Sources/App/ClaudeService.swift
-index 5144fc4..5a996c8 100644
+index 5144fc4..e8bed59 100644
 --- a/NotchBuddy/Sources/App/ClaudeService.swift
 +++ b/NotchBuddy/Sources/App/ClaudeService.swift
-@@ -186,8 +186,12 @@ final class ClaudeService {
+@@ -64,6 +64,7 @@ final class KeychainStore: @unchecked Sendable {
+         "anthropic-api-key",
+         "google-api-key",
+         "openai-api-key",
++        "zai-api-key",
+         "resend-api-key", "resend-from",
+         "n8n-url", "n8n-api-key",
+         "vercel-token",
+@@ -186,8 +187,12 @@ final class ClaudeService {
      // Multi-turn conversation messages (for API)
      private var conversationMessages: [[String: Any]] = []
  
@@ -96,7 +334,7 @@ index 5144fc4..5a996c8 100644
      }
  
      private let systemPrompt = """
-@@ -197,6 +201,46 @@ final class ClaudeService {
+@@ -197,6 +202,46 @@ final class ClaudeService {
      No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.
      """
  
@@ -143,7 +381,7 @@ index 5144fc4..5a996c8 100644
      private let webSearchTools: [[String: Any]] = [
          ["type": "web_search_20250305", "name": "web_search", "max_uses": 5]
      ]
-@@ -204,6 +248,10 @@ final class ClaudeService {
+@@ -204,6 +249,10 @@ final class ClaudeService {
      // MARK: - Chat (multi-turn, natural text + web search)
  
      func chat(query: String, context: PromptContext?, state: AppState) async {
@@ -154,7 +392,7 @@ index 5144fc4..5a996c8 100644
          guard state.chatProvider == .anthropic else {
              await chatOpenAICompatible(query: query, context: context, state: state)
              return
-@@ -266,6 +314,7 @@ final class ClaudeService {
+@@ -266,6 +315,7 @@ final class ClaudeService {
          case .google:  baseURL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
          case .openai:  baseURL = "https://api.openai.com/v1/chat/completions"
          case .anthropic: return
@@ -162,7 +400,7 @@ index 5144fc4..5a996c8 100644
          }
          guard let url = URL(string: baseURL) else { return }
  
-@@ -340,6 +389,10 @@ final class ClaudeService {
+@@ -340,6 +390,10 @@ final class ClaudeService {
      // MARK: - Structured search (M8 — window attach + web search)
  
      func search(query: String, context: PromptContext?, state: AppState) async {
@@ -173,7 +411,7 @@ index 5144fc4..5a996c8 100644
          guard let key = apiKey, !key.isEmpty else {
              await showError("Anthropic API key missing. Open settings to configure it.", state: state)
              return
-@@ -460,7 +513,10 @@ final class ClaudeService {
+@@ -460,7 +514,10 @@ final class ClaudeService {
              await showError("Unexpected API response.", state: state)
              return
          }
@@ -184,7 +422,7 @@ index 5144fc4..5a996c8 100644
          // Strip markdown code fences if present, then extract JSON object
          let cleanText: String
          if let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}") {
-@@ -500,6 +556,43 @@ final class ClaudeService {
+@@ -500,6 +557,43 @@ final class ClaudeService {
          NotificationCenter.default.post(name: .triggerEmote, object: BotEmote.proud)
      }
  
@@ -229,10 +467,45 @@ index 5144fc4..5a996c8 100644
          state.stateOverride = .error
          state.noteMessage = message
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
-index 41b71c0..f5b0340 100644
+index 41b71c0..ad7aca9 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
 +++ b/NotchBuddy/Sources/App/HookServer.swift
-@@ -176,9 +176,8 @@ final class HookServer: @unchecked Sendable {
+@@ -158,6 +158,34 @@ final class HookServer: @unchecked Sendable {
+     // View switches only happen if VS Code (or the agent pill) is currently focused.
+     // When not focused: state updates animate the mini bot in the pill; badge shown for alerts.
+ 
++    // MARK: - Status line (Claude Code usage)
++
++    @MainActor
++    private func processStatusLine(_ payload: [String: Any]) {
++        let state = AppState.shared
++        var u = state.claudeUsage
++        func int(_ k: String) -> Int? { (payload[k] as? NSNumber)?.intValue }
++        func date(_ k: String) -> Date? { (payload[k] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) } }
++        if let v = int("five_hour_pct")     { u.fiveHourPct = v }
++        if let d = date("five_hour_resets_at") { u.fiveHourResetsAt = d }
++        if let v = int("seven_day_pct")     { u.sevenDayPct = v }
++        if let d = date("seven_day_resets_at") { u.sevenDayResetsAt = d }
++        if let v = int("context_pct")       { u.contextPct = v; u.contextSessionId = payload["session_id"] as? String }
++        if let c = payload["cost_usd"] as? NSNumber { u.costUSD = c.doubleValue }
++        if let m = payload["model"] as? String, !m.isEmpty { u.model = m }
++        u.updatedAt = Date()
++        let crossed = Self.crossedAlert(old: state.claudeUsage, new: u)
++        state.claudeUsage = u
++        nbLog("StatusLine ctx=\(u.contextPct.map(String.init) ?? "-") 5h=\(u.fiveHourPct.map(String.init) ?? "-") 7d=\(u.sevenDayPct.map(String.init) ?? "-")")
++        if crossed { SoundEngine.shared.play("rate") }
++    }
++
++    /// True when either Claude window moved from below 90 % to 90 % or more.
++    private static func crossedAlert(old: AppState.ClaudeUsage, new: AppState.ClaudeUsage) -> Bool {
++        func up(_ a: Int?, _ b: Int?) -> Bool { (a ?? 0) < 90 && (b ?? 0) >= 90 }
++        return up(old.fiveHourPct, new.fiveHourPct) || up(old.sevenDayPct, new.sevenDayPct)
++    }
++
+     @MainActor
+     private func processEvent(name: String, payload: [String: Any]) {
+         let state = AppState.shared
+@@ -176,9 +204,10 @@ final class HookServer: @unchecked Sendable {
  
          let termProgram = payload["term_program"] as? String ?? ""
          let bundleId    = payload["bundle_id"]    as? String ?? ""
@@ -240,11 +513,13 @@ index 41b71c0..f5b0340 100644
 -                       bundleId.lowercased().contains("vscode")
 -        // External agents bypass the VS Code filter (their relay runs in any terminal).
 +        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
++        if name == "StatusLine" { processStatusLine(payload); return }
++
 +        // External agents bypass the terminal filter (their relay runs in any terminal).
          guard isExternalAgent || isVSCode else {
              nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
              return
-@@ -339,6 +338,16 @@ final class HookServer: @unchecked Sendable {
+@@ -339,6 +368,16 @@ final class HookServer: @unchecked Sendable {
          // Already compact and non-alert: Mochi state update is enough, no expand
      }
  
@@ -261,7 +536,7 @@ index 41b71c0..f5b0340 100644
      // MARK: - Permission request (blocking — Claude Code waits for decision)
  
      @MainActor
-@@ -364,8 +373,7 @@ final class HookServer: @unchecked Sendable {
+@@ -364,8 +403,7 @@ final class HookServer: @unchecked Sendable {
  
          let termProgram = payload["term_program"] as? String ?? ""
          let bundleId    = payload["bundle_id"]    as? String ?? ""
@@ -271,7 +546,20 @@ index 41b71c0..f5b0340 100644
          guard isVSCode else {
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
-@@ -568,6 +576,22 @@ final class HookServer: @unchecked Sendable {
+@@ -563,11 +601,35 @@ final class HookServer: @unchecked Sendable {
+         let pyURL = wrapperURL.deletingLastPathComponent().appendingPathComponent("nb-hook.py")
+         try? nbHookPythonGitHub.write(to: pyURL, atomically: true, encoding: .utf8)
+         _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: pyURL.path)
++        // nb-statusline: shell wrapper (forwards the JSON to Coucou, then runs the previous status line)
++        let slURL = URL(fileURLWithPath: Self.statusLineRelayPath)
++        try? nbStatusLineShell.write(to: slURL, atomically: true, encoding: .utf8)
++        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: slURL.path)
++        // nb-statusline.py: Python relay
++        let slPyURL = slURL.deletingLastPathComponent().appendingPathComponent("nb-statusline.py")
++        try? nbStatusLinePython.write(to: slPyURL, atomically: true, encoding: .utf8)
++        _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: slPyURL.path)
+         #endif
+     }
  
      // MARK: - Outdated hook detection
  
@@ -294,6 +582,172 @@ index 41b71c0..f5b0340 100644
      /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
      static func hooksNeedUpdate() -> Bool {
          let settingsURL = FileManager.default.homeDirectoryForCurrentUser
+@@ -681,6 +743,81 @@ final class HookServer: @unchecked Sendable {
+         try newData.write(to: settingsURL, options: .atomic)
+     }
+ 
++    // MARK: - Status-line relay installer (Claude Code settings.statusLine)
++
++    static var statusLineRelayPath: String { supportDir.appendingPathComponent("nb-statusline").path }
++    static var statusLineUpstreamPath: String { supportDir.appendingPathComponent("statusline-upstream.sh").path }
++
++    private static var claudeSettingsURL: URL {
++        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
++    }
++
++    /// True when settings.statusLine.command points at Coucou's relay.
++    static func statusLineRelayInstalled() -> Bool {
++        guard let data = try? Data(contentsOf: claudeSettingsURL),
++              let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let sl = s["statusLine"] as? [String: Any],
++              let cmd = sl["command"] as? String else { return false }
++        return cmd.contains("nb-statusline")
++    }
++
++    /// The command currently configured, if any (shown in Settings before installing).
++    static func currentStatusLineCommand() -> String? {
++        guard let data = try? Data(contentsOf: claudeSettingsURL),
++              let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let sl = s["statusLine"] as? [String: Any] else { return nil }
++        return sl["command"] as? String
++    }
++
++    /// Installs the relay: saves the previous command (if not already ours) to statusline-upstream.sh,
++    /// backs up settings.json, and points settings.statusLine.command at nb-statusline.
++    func installStatusLineRelay() throws {
++        let url = Self.claudeSettingsURL
++        var settings: [String: Any] = [:]
++        if let data = try? Data(contentsOf: url),
++           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] { settings = parsed }
++        var sl = settings["statusLine"] as? [String: Any] ?? [:]
++        if let prev = sl["command"] as? String, !prev.isEmpty, !prev.contains("nb-statusline") {
++            let body = "#!/bin/sh\n" + prev + "\n"
++            try body.write(toFile: Self.statusLineUpstreamPath, atomically: true, encoding: .utf8)
++            _ = try? FileManager.default.setAttributes([.posixPermissions: 0o700 as NSNumber], ofItemAtPath: Self.statusLineUpstreamPath)
++        }
++        sl["type"] = "command"
++        sl["command"] = "/bin/sh \"\(Self.statusLineRelayPath.replacingOccurrences(of: "\"", with: "\\\""))\""
++        settings["statusLine"] = sl
++        try Self.writeClaudeSettings(settings, backupFirst: true)
++    }
++
++    /// Removes the relay: restores the saved upstream command, or deletes statusLine if there was none.
++    func uninstallStatusLineRelay() throws {
++        let url = Self.claudeSettingsURL
++        guard let data = try? Data(contentsOf: url),
++              var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
++        guard var sl = settings["statusLine"] as? [String: Any],
++              (sl["command"] as? String)?.contains("nb-statusline") == true else { return }
++        if let saved = try? String(contentsOfFile: Self.statusLineUpstreamPath, encoding: .utf8) {
++            let lines = saved.split(separator: "\n", omittingEmptySubsequences: false)
++            let cmd = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .newlines)
++            if !cmd.isEmpty { sl["command"] = cmd; settings["statusLine"] = sl }
++            else { settings.removeValue(forKey: "statusLine") }
++        } else {
++            settings.removeValue(forKey: "statusLine")
++        }
++        try Self.writeClaudeSettings(settings, backupFirst: true)
++    }
++
++    private static func writeClaudeSettings(_ settings: [String: Any], backupFirst: Bool) throws {
++        let url = claudeSettingsURL
++        if backupFirst, FileManager.default.fileExists(atPath: url.path) {
++            let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmm"
++            let backup = url.deletingLastPathComponent().appendingPathComponent("settings.json.bak-\(f.string(from: Date()))")
++            try? FileManager.default.copyItem(at: url, to: backup)
++        }
++        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
++        let data = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys])
++        try data.write(to: url, options: .atomic)
++    }
++
+     // MARK: - App Store: hooks via security-scoped bookmark
+ 
+     #if APPSTORE
+@@ -1394,3 +1531,83 @@ def main():
+ main()
+ sys.exit(0)
+ """
++
++// nb-statusline — Claude Code status-line relay. Forwards the JSON to Coucou in the background,
++// then hands it to the previous status-line command (saved at install time) so its output still shows.
++private let nbStatusLineShell = """
++#!/bin/sh
++# Coucou status-line relay — forwards Claude Code's status JSON to Coucou, then runs the previous status line
++DIR="$(cd "$(dirname "$0")" && pwd)"
++payload=$(cat)
++[ -z "$payload" ] && exit 0
++if xcode-select -p >/dev/null 2>&1; then
++    printf '%s' "$payload" | /usr/bin/python3 "$DIR/nb-statusline.py" >/dev/null 2>&1 &
++fi
++if [ -s "$DIR/statusline-upstream.sh" ]; then
++    printf '%s' "$payload" | /bin/sh "$DIR/statusline-upstream.sh"
++fi
++exit 0
++"""
++
++private let nbStatusLinePython = """
++#!/usr/bin/env python3
++# nb-statusline.py — reads Claude Code status-line JSON on stdin, forwards a compact StatusLine event to Coucou.
++import sys, json, os, socket, time
++
++def main():
++    try:
++        payload = json.loads(sys.stdin.buffer.read() or b'{}')
++    except Exception:
++        return
++    sid = str(payload.get('session_id') or '')
++    # Throttle: at most one event per session every 3 s (Claude Code redraws often while streaming).
++    stamp = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'coucou-statusline-' + (sid[:8] or 'x'))
++    try:
++        if time.time() - os.path.getmtime(stamp) < 3:
++            return
++    except OSError:
++        pass
++    try:
++        open(stamp, 'w').close()
++    except OSError:
++        pass
++    cw = payload.get('context_window') or {}
++    rl = payload.get('rate_limits') or {}
++    fh = rl.get('five_hour') or {}
++    sd = rl.get('seven_day') or {}
++    model = payload.get('model') or {}
++    cost = payload.get('cost') or {}
++    out = {
++        'hook_event_name': 'StatusLine',
++        'session_id': sid,
++        'cwd': payload.get('cwd') or '',
++        'model': model.get('display_name') or model.get('id') or '',
++        'term_program': os.environ.get('TERM_PROGRAM', ''),
++        'bundle_id': os.environ.get('__CFBundleIdentifier', ''),
++    }
++    if isinstance(cw.get('used_percentage'), (int, float)):
++        out['context_pct'] = int(round(cw['used_percentage']))
++    if isinstance(cost.get('total_cost_usd'), (int, float)):
++        out['cost_usd'] = float(cost['total_cost_usd'])
++    if isinstance(fh.get('used_percentage'), (int, float)):
++        out['five_hour_pct'] = int(round(fh['used_percentage']))
++    if isinstance(fh.get('resets_at'), (int, float)):
++        out['five_hour_resets_at'] = int(fh['resets_at'])
++    if isinstance(sd.get('used_percentage'), (int, float)):
++        out['seven_day_pct'] = int(round(sd['used_percentage']))
++    if isinstance(sd.get('resets_at'), (int, float)):
++        out['seven_day_resets_at'] = int(sd['resets_at'])
++    path = os.path.expanduser('~/Library/Application Support/NotchBuddy/nb.sock')
++    try:
++        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        s.settimeout(0.3)
++        s.connect(path)
++        s.sendall((json.dumps(out) + '\\n').encode())
++        s.close()
++    except Exception:
++        pass
++
++if __name__ == '__main__':
++    main()
++    sys.exit(0)
++"""
 diff --git a/NotchBuddy/Sources/App/IslandTypes.swift b/NotchBuddy/Sources/App/IslandTypes.swift
 index 5200af8..8b46a88 100644
 --- a/NotchBuddy/Sources/App/IslandTypes.swift
@@ -351,10 +805,64 @@ index 5200af8..8b46a88 100644
  
  // MARK: - View dimensions (from VIEWS in prototype)
 diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
-index c0e1ec3..609696c 100644
+index c0e1ec3..b148080 100644
 --- a/NotchBuddy/Sources/App/IslandViewContent.swift
 +++ b/NotchBuddy/Sources/App/IslandViewContent.swift
-@@ -123,11 +123,14 @@ struct OverviewView: View {
+@@ -37,6 +37,11 @@ struct OverviewView: View {
+ 
+     var agent: AgentTask? { state.focusTask }
+ 
++    /// Other agent pills that share the right panel with the usage card.
++    var others: [AgentTask] { state.tasks.filter { $0.id != state.focusId } }
++    var showUsage: Bool { state.usageConfigured }
++    var panelHidden: Bool { others.isEmpty && !showUsage }
++
+     var body: some View {
+         HStack(spacing: 10) {
+             // Left card: title row + ticker below + ↗ button overlay
+@@ -71,6 +76,12 @@ struct OverviewView: View {
+                                     .lineLimit(1)
+                                     .truncationMode(.tail)
+                                 Spacer(minLength: 2)
++                                if agent.id == "integration_claude", let ctx = state.claudeUsage.contextPct {
++                                    Text("ctx \(ctx)%")
++                                        .font(.system(size: 11))
++                                        .foregroundColor(ctx >= 90 ? Color(hex: "#F26B5B") : (ctx >= 75 ? Color(hex: "#F5A524") : Color(hex: "#6B7079")))
++                                        .fixedSize()
++                                }
+                                 if agent.steps.count > 1 {
+                                     Text("\(min(agent.stepIndex + 1, agent.steps.count))/\(agent.steps.count)")
+                                         .font(.system(size: 11))
+@@ -109,11 +120,24 @@ struct OverviewView: View {
+                     .frame(maxWidth: .infinity, alignment: .trailing)
+                 }
+             }
+-            .frame(width: 322)
++            .frame(width: panelHidden ? nil : 322)
+ 
+-            // Right card: agent pills
+-            CardBackground(wash: nil) {
+-                AgentPillsView(state: state)
++            // Right card: agent pills and/or usage
++            if !others.isEmpty || showUsage {
++                CardBackground(wash: nil) {
++                    VStack(spacing: 0) {
++                        if !others.isEmpty { AgentPillsView(state: state) }
++                        if showUsage {
++                            if others.isEmpty {
++                                UsageCardView(state: state)
++                            } else {
++                                UsageStripView(state: state)
++                                    .padding(.horizontal, 10)
++                                    .padding(.bottom, 8)
++                            }
++                        }
++                    }
++                }
+             }
+         }
+         .onChange(of: state.focusId) { _, _ in showingN8nDetail = false }
+@@ -123,11 +147,14 @@ struct OverviewView: View {
          guard let task else { return }
          switch task.id {
          case "integration_claude":
@@ -372,7 +880,7 @@ index c0e1ec3..609696c 100644
              }
          case "integration_resend":
              NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)
-@@ -886,7 +889,7 @@ struct ModelPickerView: View {
+@@ -886,7 +913,7 @@ struct ModelPickerView: View {
          VStack(alignment: .leading, spacing: 12) {
              // Provider chips
              HStack(spacing: 6) {
@@ -381,7 +889,7 @@ index c0e1ec3..609696c 100644
                      Button {
                          guard provider != state.chatProvider else { return }
                          withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-@@ -901,6 +904,8 @@ struct ModelPickerView: View {
+@@ -901,6 +928,8 @@ struct ModelPickerView: View {
                                  .frame(width: 7, height: 7)
                              Text(provider.displayName)
                                  .font(.system(size: 12, weight: state.chatProvider == provider ? .semibold : .regular))
@@ -390,7 +898,7 @@ index c0e1ec3..609696c 100644
                          }
                          .padding(.horizontal, 10)
                          .padding(.vertical, 6)
-@@ -954,6 +959,7 @@ struct ModelPickerView: View {
+@@ -954,6 +983,7 @@ struct ModelPickerView: View {
                      ForEach(models, id: \.id) { model in
                          Button {
                              switch state.chatProvider {
@@ -398,7 +906,7 @@ index c0e1ec3..609696c 100644
                              case .anthropic: state.claudeModel = model.id
                              case .google:    state.googleChatModel = model.id
                              case .openai:    state.openAIChatModel = model.id
-@@ -1265,7 +1271,7 @@ struct IntegrationCardView: View {
+@@ -1265,7 +1295,7 @@ struct IntegrationCardView: View {
                     : task.id == "integration_calcom"  ? appState.calcomError
                     : nil
          if let err = svcErr { return err }
@@ -407,7 +915,7 @@ index c0e1ec3..609696c 100644
          let isAI    = task.id == "ai_anthropic" || task.id == "ai_google" || task.id == "ai_openai"
          if isConfigured {
              if isHooks { return "Hooks installed" }
-@@ -1379,7 +1385,7 @@ struct IntegrationCardView: View {
+@@ -1379,7 +1409,7 @@ struct IntegrationCardView: View {
  
                  HStack(spacing: 8) {
                      if task.id == "integration_claude" {
@@ -416,7 +924,7 @@ index c0e1ec3..609696c 100644
                              .font(.system(size: 11, weight: .medium))
                              .foregroundColor(Color(hex: task.color).opacity(0.7))
                              .buttonStyle(.plain)
-@@ -1482,29 +1488,16 @@ struct IntegrationCardView: View {
+@@ -1482,29 +1512,16 @@ struct IntegrationCardView: View {
          }
      }
  
@@ -450,6 +958,18 @@ index c0e1ec3..609696c 100644
              NSWorkspace.shared.openApplication(at: appURL, configuration: .init(), completionHandler: nil)
          }
      }
+@@ -2551,9 +2568,9 @@ struct AgentPill: View {
+     let onTap: () -> Void
+     @State private var isHovered = false
+ 
+-    // VS Code pill always shows "VS Code" label regardless of active project name
++    // integration_claude pill shows its catalog name regardless of active project name
+     private var displayName: String {
+-        task.id == "integration_claude" ? "VS Code" : task.name
++        task.id == "integration_claude" ? (PillCatalog.definition(for: task.id)?.name ?? task.name) : task.name
+     }
+ 
+     var body: some View {
 diff --git a/NotchBuddy/Sources/App/PillCatalog.swift b/NotchBuddy/Sources/App/PillCatalog.swift
 index 6d9b198..f6f6f16 100644
 --- a/NotchBuddy/Sources/App/PillCatalog.swift
@@ -466,7 +986,7 @@ index 6d9b198..f6f6f16 100644
                category: .workspace, subtitle: "Integration",  source: .agent,  comingSoon: true),
          .init(id: "agent_codex",         name: "Codex",       color: "#2DD4BF",
 diff --git a/NotchBuddy/Sources/App/SettingsView.swift b/NotchBuddy/Sources/App/SettingsView.swift
-index f9ee07e..f25bb93 100644
+index f9ee07e..2b99ea4 100644
 --- a/NotchBuddy/Sources/App/SettingsView.swift
 +++ b/NotchBuddy/Sources/App/SettingsView.swift
 @@ -5,6 +5,8 @@ import AppKit
@@ -478,15 +998,57 @@ index f9ee07e..f25bb93 100644
  
      // Claude model — dynamic list fetched from the API, static fallback if unavailable
      private static let fallbackModels: [(id: String, label: String)] = [
-@@ -31,6 +33,7 @@ struct SettingsView: View {
+@@ -31,6 +33,49 @@ struct SettingsView: View {
      @State private var showDiff: Bool = false
      @State private var pendingHookJSON: String = ""
      @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
 +    @State private var claudeHooksInstalled: Bool = HookServer.claudeHooksInstalled()
++    @State private var relayInstalled: Bool = HookServer.statusLineRelayInstalled()
++    @State private var zaiKey: String = KeychainStore.shared.get("zai-api-key") ?? ""
++
++    private func confirmRelayInstall() {
++        let alert = NSAlert()
++        alert.messageText = "Install the status-line relay?"
++        let current = HookServer.currentStatusLineCommand()
++        alert.informativeText = "settings.statusLine.command becomes:\n/bin/sh \"\(HookServer.statusLineRelayPath)\"\n\n"
++            + (current.map { $0.contains("nb-statusline") ? "The relay is already installed; it will be refreshed." : "The current command is saved to statusline-upstream.sh and still runs after the relay." }
++               ?? "No status line is configured today; only the relay will run.")
++            + "\n\nA backup of ~/.claude/settings.json is written first."
++        alert.addButton(withTitle: "Install"); alert.addButton(withTitle: "Cancel")
++        guard alert.runModal() == .alertFirstButtonReturn else { return }
++        do { try HookServer.shared.installStatusLineRelay(); relayInstalled = true; statusMessage = "✓ Relay installed. Values appear after the next Claude Code reply." }
++        catch { statusMessage = "❌ \(error.localizedDescription)" }
++    }
++
++    private func confirmRelayRemove() {
++        let alert = NSAlert()
++        alert.messageText = "Remove the status-line relay?"
++        alert.informativeText = "The previous status-line command is restored from statusline-upstream.sh."
++        alert.addButton(withTitle: "Remove"); alert.addButton(withTitle: "Cancel")
++        guard alert.runModal() == .alertFirstButtonReturn else { return }
++        do { try HookServer.shared.uninstallStatusLineRelay(); relayInstalled = false; statusMessage = "✓ Relay removed." }
++        catch { statusMessage = "❌ \(error.localizedDescription)" }
++    }
++
++    private func importZaiKeyFromPi() {
++        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent/models.json")
++        guard let data = try? Data(contentsOf: url),
++              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++              let providers = json["providers"] as? [String: Any],
++              let zai = providers["zai"] as? [String: Any],
++              let key = zai["apiKey"] as? String, !key.isEmpty, !key.hasPrefix("env:") else {
++            statusMessage = "❌ No Z.ai key found in ~/.pi/agent/models.json (providers.zai.apiKey)."
++            return
++        }
++        zaiKey = key
++        KeychainStore.shared.set("zai-api-key", value: key)
++        ZaiPoller.shared.pollNow()
++        statusMessage = "✓ Z.ai key imported from pi."
++    }
  
      #if !APPSTORE
      @State private var geminiHooksInstalled: Bool = HookServer.geminiHooksInstalled()
-@@ -79,12 +82,48 @@ struct SettingsView: View {
+@@ -79,12 +124,48 @@ struct SettingsView: View {
          )
      }
  
@@ -536,7 +1098,7 @@ index f9ee07e..f25bb93 100644
                      VStack(alignment: .leading, spacing: 8) {
                          SecureField("API key (sk-ant-…)", text: $apiKey)
                              .textFieldStyle(.roundedBorder)
-@@ -116,7 +155,7 @@ struct SettingsView: View {
+@@ -116,7 +197,7 @@ struct SettingsView: View {
                                  .onChange(of: customModel) { _, value in applyCustomModel(value) }
                          }
  
@@ -545,7 +1107,7 @@ index f9ee07e..f25bb93 100644
                              .font(.system(size: 11))
                              .foregroundColor(.secondary)
                      }
-@@ -161,6 +200,15 @@ struct SettingsView: View {
+@@ -161,6 +242,15 @@ struct SettingsView: View {
                  // MARK: Hooks
                  GroupBox("Claude Code Hooks") {
                      VStack(alignment: .leading, spacing: 10) {
@@ -561,7 +1123,62 @@ index f9ee07e..f25bb93 100644
                          if hookNeedsUpdate {
                              HStack(spacing: 6) {
                                  Image(systemName: "exclamationmark.triangle.fill")
-@@ -633,6 +681,7 @@ struct SettingsView: View {
+@@ -222,6 +312,54 @@ struct SettingsView: View {
+ 
+                 // MARK: Gemini CLI Hooks / Antigravity Hooks
+                 #if !APPSTORE
++                GroupBox("Usage card") {
++                    VStack(alignment: .leading, spacing: 10) {
++                        Text("Shows Claude Code's 5-hour and 7-day limits and the Z.ai GLM quota in the island's right panel.")
++                            .font(.system(size: 12)).foregroundColor(.secondary)
++
++                        // Claude: status-line relay
++                        HStack(spacing: 6) {
++                            Circle().fill(relayInstalled ? Color(hex: "#22C55E") : Color(hex: "#F4505E")).frame(width: 8, height: 8)
++                            Text(relayInstalled
++                                 ? "Status-line relay installed — Claude Code reports limits to the notch"
++                                 : "Status-line relay not installed — Claude limits unavailable")
++                                .font(.system(size: 11)).foregroundColor(.secondary)
++                        }
++                        HStack(spacing: 10) {
++                            Button(relayInstalled ? "Reinstall relay" : "Install relay") { confirmRelayInstall() }
++                                .buttonStyle(.borderedProminent)
++                            Button("Remove relay") { confirmRelayRemove() }
++                                .buttonStyle(.bordered).disabled(!relayInstalled)
++                        }
++                        Text("Wraps the current status line (Orca's) and keeps running it. Backs up settings.json first.")
++                            .font(.system(size: 10.5)).foregroundColor(.secondary)
++
++                        Divider()
++
++                        // GLM: Z.ai key
++                        HStack(spacing: 8) {
++                            Circle().fill(Color(hex: "#E0A030")).frame(width: 8, height: 8)
++                            Text("Z.ai GLM coding plan").font(.system(size: 12, weight: .semibold))
++                        }
++                        SecureField("Z.ai API key", text: $zaiKey).textFieldStyle(.roundedBorder)
++                        HStack(spacing: 10) {
++                            Button("Save") {
++                                KeychainStore.shared.set("zai-api-key", value: zaiKey)
++                                ZaiPoller.shared.pollNow()
++                                statusMessage = "✓ Z.ai key saved."
++                            }.buttonStyle(.borderedProminent)
++                            Button("Import from pi") { importZaiKeyFromPi() }
++                        }
++                        if let e = state.zaiUsage.error {
++                            Text(e).font(.system(size: 11)).foregroundColor(.red)
++                        } else if let t = state.zaiUsage.updatedAt {
++                            Text("Last poll \(t.formatted(date: .omitted, time: .shortened)) · plan \(state.zaiUsage.level ?? "?") · 5h \(state.zaiUsage.fiveHourPct ?? 0)% · week \(state.zaiUsage.weeklyPct ?? 0)%")
++                                .font(.system(size: 11)).foregroundColor(.secondary)
++                        }
++                    }
++                    .padding(6)
++                }
++
+                 GroupBox("Gemini CLI Hooks") {
+                     VStack(alignment: .leading, spacing: 10) {
+                         Text(geminiHooksInstalled
+@@ -633,6 +771,7 @@ struct SettingsView: View {
              statusMessage = "✓ Hooks installed in ~/.claude/settings.json"
              pendingHookJSON = ""
              hookNeedsUpdate = false
@@ -569,7 +1186,7 @@ index f9ee07e..f25bb93 100644
          } catch {
              statusMessage = "❌ Write error: \(error.localizedDescription)"
          }
-@@ -642,6 +691,7 @@ struct SettingsView: View {
+@@ -642,6 +781,7 @@ struct SettingsView: View {
          do {
              try HookServer.shared.uninstallClaudeHooks()
              statusMessage = "✓ Hooks removed."
@@ -577,3 +1194,312 @@ index f9ee07e..f25bb93 100644
          } catch {
              statusMessage = "❌ \(error.localizedDescription)"
          }
+diff --git a/NotchBuddy/Sources/App/UsageViews.swift b/NotchBuddy/Sources/App/UsageViews.swift
+new file mode 100644
+index 0000000..ac6ae1a
+--- /dev/null
++++ b/NotchBuddy/Sources/App/UsageViews.swift
+@@ -0,0 +1,216 @@
++import SwiftUI
++
++// Shared usage-card palette.
++private let claudeBarBase = Color(hex: "#5B8DEF")
++private let glmBarBase = Color(hex: "#E0A030")
++
++/// nil → grey track, ≥ 90 → red, ≥ 75 → amber, else the provider base colour.
++private func barColor(pct: Int?, base: Color) -> Color {
++    guard let p = pct else { return Color(hex: "#3B4559") }
++    if p >= 90 { return Color(hex: "#F26B5B") }
++    if p >= 75 { return Color(hex: "#F5A524") }
++    return base
++}
++
++private func pctText(_ p: Int?) -> String {
++    p.map { "\($0)%" } ?? "—"
++}
++
++/// nil → "", same calendar day → "HH:mm", otherwise → "EEE" (e.g. "Mon").
++private func resetText(_ d: Date?) -> String {
++    guard let d = d else { return "" }
++    let f = DateFormatter()
++    f.locale = Locale.current
++    if Calendar.current.isDate(d, inSameDayAs: Date()) {
++        f.dateFormat = "HH:mm"
++    } else {
++        f.dateFormat = "EEE"
++    }
++    return f.string(from: d)
++}
++
++private func timeHHmm(_ d: Date?) -> String {
++    guard let d = d else { return "" }
++    let f = DateFormatter()
++    f.locale = Locale.current
++    f.dateFormat = "HH:mm"
++    return f.string(from: d)
++}
++
++private func fullWhen(_ d: Date) -> String {
++    let f = DateFormatter()
++    f.locale = Locale.current
++    f.dateFormat = "EEE HH:mm"
++    return f.string(from: d)
++}
++
++private func joinResets(_ a: Date?, _ b: Date?) -> String {
++    [resetText(a), resetText(b)].filter { !$0.isEmpty }.joined(separator: " · ")
++}
++
++/// One labelled progress bar row: 48-pt label, flexible track, 36-pt monospaced value.
++private struct UsageRow: View {
++    let label: String
++    let pct: Int?
++    let base: Color
++    let dim: Bool
++
++    var body: some View {
++        HStack(spacing: 6) {
++            Text(label)
++                .font(.system(size: 10.5))
++                .foregroundColor(Color(hex: "#9AA3B2"))
++                .frame(width: 48, alignment: .leading)
++            GeometryReader { geo in
++                ZStack(alignment: .leading) {
++                    Capsule().fill(Color(hex: "#1E2330"))
++                    Capsule().fill(barColor(pct: pct, base: base))
++                        .frame(width: max(0, min(100, Double(pct ?? 0))) / 100 * geo.size.width)
++                }
++            }
++            .frame(height: 6)
++            Text(pctText(pct))
++                .font(.system(size: 10.5, design: .monospaced))
++                .foregroundColor(Color(hex: "#C9D0DB"))
++                .frame(width: 36, alignment: .trailing)
++        }
++        .opacity(dim ? 0.45 : 1)
++    }
++}
++
++/// 4-pt mini bar for the one-line strip.
++private struct MiniBar: View {
++    let pct: Int?
++    let base: Color
++
++    var body: some View {
++        GeometryReader { geo in
++            ZStack(alignment: .leading) {
++                Capsule().fill(Color(hex: "#1E2330"))
++                Capsule().fill(barColor(pct: pct, base: base))
++                    .frame(width: max(0, min(100, Double(pct ?? 0))) / 100 * geo.size.width)
++            }
++        }
++        .frame(width: 44, height: 4)
++    }
++}
++
++/// Full card: two groups, two bars each. Used when no agent pills share the panel.
++struct UsageCardView: View {
++    @ObservedObject var state: AppState
++
++    var body: some View {
++        VStack(alignment: .leading, spacing: 6) {
++            claudeSection
++            glmSection
++        }
++        .padding(12)
++    }
++
++    private var titleFont: Font { .system(size: 9.5).monospaced() }
++    private var titleColor: Color { Color(hex: "#7F8A9B") }
++
++    @ViewBuilder
++    private var claudeSection: some View {
++        let c = state.claudeUsage
++        if c.updatedAt == nil {
++            HStack(spacing: 4) {
++                Text(HookServer.statusLineRelayInstalled() ? "claude · not reporting yet" : "claude · install the relay in Settings")
++                    .font(titleFont)
++                    .foregroundColor(titleColor)
++                Spacer(minLength: 0)
++            }
++        } else {
++            HStack(spacing: 4) {
++                Text(c.isStale ? "claude · as of \(timeHHmm(c.updatedAt))" : "claude")
++                    .font(titleFont)
++                    .foregroundColor(titleColor)
++                Spacer(minLength: 0)
++                Text(joinResets(c.fiveHourResetsAt, c.sevenDayResetsAt))
++                    .font(titleFont)
++                    .foregroundColor(titleColor)
++            }
++            UsageRow(label: "5 hour", pct: c.fiveHourPct, base: claudeBarBase, dim: c.isStale)
++            UsageRow(label: "7 day", pct: c.sevenDayPct, base: claudeBarBase, dim: c.isStale)
++        }
++    }
++
++    @ViewBuilder
++    private var glmSection: some View {
++        let g = state.zaiUsage
++        if let e = g.error {
++            HStack(spacing: 4) {
++                Text("glm · \(e)")
++                    .font(titleFont)
++                    .foregroundColor(Color(hex: "#F26B5B"))
++                Spacer(minLength: 0)
++            }
++        } else if (KeychainStore.shared.get("zai-api-key") ?? "").isEmpty {
++            HStack(spacing: 4) {
++                Text("glm · add the Z.ai key in Settings")
++                    .font(titleFont)
++                    .foregroundColor(titleColor)
++                Spacer(minLength: 0)
++            }
++        } else {
++            HStack(spacing: 4) {
++                Text("glm · z.ai \(g.level ?? "")")
++                    .font(titleFont)
++                    .foregroundColor(titleColor)
++                Spacer(minLength: 0)
++                Text(joinResets(g.fiveHourResetsAt, g.weeklyResetsAt))
++                    .font(titleFont)
++                    .foregroundColor(titleColor)
++            }
++            UsageRow(label: "5 hour", pct: g.fiveHourPct, base: glmBarBase, dim: g.isStale)
++            UsageRow(label: "weekly", pct: g.weeklyPct, base: glmBarBase, dim: g.isStale)
++        }
++    }
++}
++
++/// One-line strip: "C ▮▮▮ 61 · 23   G ▮ 3 · 18". Used under the pills when workers run.
++struct UsageStripView: View {
++    @ObservedObject var state: AppState
++
++    var body: some View {
++        let c = state.claudeUsage
++        let g = state.zaiUsage
++        let cKnown = c.fiveHourPct != nil || c.sevenDayPct != nil
++        let cMax = max(c.fiveHourPct ?? 0, c.sevenDayPct ?? 0)
++        let gKnown = g.fiveHourPct != nil || g.weeklyPct != nil
++        let gMax = max(g.fiveHourPct ?? 0, g.weeklyPct ?? 0)
++        return HStack(spacing: 6) {
++            Text("C")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(claudeBarBase)
++            MiniBar(pct: cKnown ? cMax : nil, base: claudeBarBase)
++            Text("\(c.fiveHourPct.map(String.init) ?? "—") · \(c.sevenDayPct.map(String.init) ?? "—")")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(cKnown && cMax >= 90 ? Color(hex: "#F26B5B") : Color(hex: "#C9D0DB"))
++            Spacer().frame(width: 6)
++            Text("G")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(glmBarBase)
++            MiniBar(pct: gKnown ? gMax : nil, base: glmBarBase)
++            Text("\(g.fiveHourPct.map(String.init) ?? "—") · \(g.weeklyPct.map(String.init) ?? "—")")
++                .font(.system(size: 9.5).monospaced())
++                .foregroundColor(gKnown && gMax >= 90 ? Color(hex: "#F26B5B") : Color(hex: "#C9D0DB"))
++        }
++        .frame(height: 16)
++        .help(helpText)
++    }
++
++    private var helpText: String {
++        let c = state.claudeUsage
++        let g = state.zaiUsage
++        var cl = "Claude: 5h \(pctText(c.fiveHourPct))"
++        if let d = c.fiveHourResetsAt { cl += " (resets \(fullWhen(d)))" }
++        cl += " · 7d \(pctText(c.sevenDayPct))"
++        if let d = c.sevenDayResetsAt { cl += " (resets \(fullWhen(d)))" }
++        var gl = "GLM: 5h \(pctText(g.fiveHourPct))"
++        if let d = g.fiveHourResetsAt { gl += " (resets \(fullWhen(d)))" }
++        gl += " · weekly \(pctText(g.weeklyPct))"
++        if let d = g.weeklyResetsAt { gl += " (resets \(fullWhen(d)))" }
++        return cl + "\n" + gl
++    }
++}
+diff --git a/NotchBuddy/Sources/App/ZaiPoller.swift b/NotchBuddy/Sources/App/ZaiPoller.swift
+new file mode 100644
+index 0000000..23bd881
+--- /dev/null
++++ b/NotchBuddy/Sources/App/ZaiPoller.swift
+@@ -0,0 +1,81 @@
++import Foundation
++import SwiftUI
++
++/// Polls the Z.ai GLM coding-plan quota (5-hour and weekly windows) for the usage card.
++final class ZaiPoller: @unchecked Sendable {
++    static let shared = ZaiPoller()
++    private var timer: DispatchSourceTimer?
++
++    private init() {}
++
++    func start() {
++        guard timer == nil else { return }
++        let t = DispatchSource.makeTimerSource(queue: .global(qos: .background))
++        t.schedule(deadline: .now() + 4, repeating: 60)
++        t.setEventHandler { [weak self] in self?.poll() }
++        t.resume()
++        timer = t
++    }
++
++    func pollNow() { poll() }
++
++    private func poll() {
++        guard let key = KeychainStore.shared.get("zai-api-key"), !key.isEmpty else { return }
++        fetchQuota(key: key)
++    }
++
++    private func fetchQuota(key: String) {
++        guard let url = URL(string: "https://api.z.ai/api/monitor/usage/quota/limit") else { return }
++        var req = URLRequest(url: url, timeoutInterval: 15)
++        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
++        req.setValue("application/json", forHTTPHeaderField: "Accept")
++        req.setValue("en-US,en", forHTTPHeaderField: "Accept-Language")
++
++        URLSession.shared.dataTask(with: req) { data, response, error in
++            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
++            if code != 200 {
++                let errMsg = code == 0 ? (error?.localizedDescription ?? "Z.ai no connection") : "Zai \(code)"
++                DispatchQueue.main.async { AppState.shared.zaiUsage.error = errMsg }
++                return
++            }
++            guard let data,
++                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++                  let d = json["data"] as? [String: Any] else { return }
++
++            var fiveHourPct: Int? = nil
++            var fiveHourResetsAt: Date? = nil
++            var weeklyPct: Int? = nil
++            var weeklyResetsAt: Date? = nil
++            let level = d["level"] as? String
++            if let limits = d["limits"] as? [[String: Any]] {
++                for l in limits {
++                    let unit = (l["unit"] as? NSNumber)?.intValue ?? 0
++                    let pct = (l["percentage"] as? NSNumber)?.intValue
++                    let reset = (l["nextResetTime"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
++                    if unit == 3 { fiveHourPct = pct; fiveHourResetsAt = reset }
++                    if unit == 6 { weeklyPct = pct; weeklyResetsAt = reset }
++                }
++            }
++
++            let fh = fiveHourPct, fr = fiveHourResetsAt
++            let wk = weeklyPct, wr = weeklyResetsAt
++            let lv = level ?? ""
++            DispatchQueue.main.async {
++                let state = AppState.shared
++                let prev = state.zaiUsage
++                var u = prev
++                u.fiveHourPct = fh
++                u.fiveHourResetsAt = fr
++                u.weeklyPct = wk
++                u.weeklyResetsAt = wr
++                u.level = lv.isEmpty ? nil : lv
++                u.error = nil
++                u.updatedAt = Date()
++                state.zaiUsage = u
++                appendAppLog("nb.log", "Zai 5h=\(fh.map(String.init) ?? "-") wk=\(wk.map(String.init) ?? "-") level=\(lv.isEmpty ? "-" : lv)")
++                func up(_ a: Int?, _ b: Int?) -> Bool { (a ?? 0) < 90 && (b ?? 0) >= 90 }
++                if up(prev.fiveHourPct, fh) || up(prev.weeklyPct, wk) { SoundEngine.shared.play("rate") }
++            }
++        }.resume()
++    }
++}

@@ -198,6 +198,7 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
       <li>Jump to Orca from the Claude pill</li>
       <li>pi workers Orca dispatches: one pill per brief, with phase, note, report and worker_done milestones</li>
       <li>Chat through your Claude Code login via <code>claude -p</code>, no API key</li>
+      <li>Usage card: Claude 5-hour and 7-day limits plus the Z.ai GLM quota, folding to a strip under worker pills</li>
     </ul></div>
     <div class="scope" style="display:block"><h3>Left out on purpose</h3><ul>
       <li>Gemini CLI and Antigravity hooks</li>
@@ -221,6 +222,7 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
     <li><a href="#launch"><span class="n">06</span><span>First launch</span></a></li>
     <li><a href="#hooks"><span class="n">07</span><span>Install hooks</span></a></li>
     <li><a href="#pi"><span class="n">08</span><span>pi extension</span></a></li>
+    <li><a href="#usage"><span class="n">08b</span><span>Usage card</span></a></li>
     <li><a href="#operate"><span class="n">09</span><span>Operating rules</span></a></li>
     <li><a href="#update"><span class="n">10</span><span>Updating</span></a></li>
     <li><a href="#rollback"><span class="n">11</span><span>Rollback</span></a></li>
@@ -296,8 +298,10 @@ NotchBuddy/Sources/App/AppState.swift          | 20 +++++-        no service pil
 NotchBuddy/Sources/App/ClaudeCodeCLI.swift     | 160 ++++++++++   new: locate and run the local claude CLI headless
 NotchBuddy/Sources/App/ClaudeService.swift     | 93 +++++++       chat and search routed through the CLI, session resume
 NotchBuddy/Sources/App/IslandTypes.swift       |  5 +            ChatProvider.claudeCode
-NotchBuddy/Sources/App/SettingsView.swift      | 42 ++++-         "Claude Code (local)" box; Anthropic key optional
-8 files changed, 345 insertions(+), 33 deletions(-)
+NotchBuddy/Sources/App/SettingsView.swift      | 120 +++++++      "Claude Code (local)" and "Usage card" boxes; hooks status
+NotchBuddy/Sources/App/ZaiPoller.swift         | 81 ++++++        new: Z.ai GLM quota poller, every 60 s
+NotchBuddy/Sources/App/UsageViews.swift        | 216 ++++++++++   new: usage card and one-line strip
+11 files changed, 1041 insertions(+), 40 deletions(-)
 
 <span class="c"># The full diff lives at patches/coucou-orca.patch in the coucou-orca repo.</span></code></pre>
     </details>
@@ -361,7 +365,7 @@ strings -n 8 /Applications/Coucou.app/Contents/MacOS/Coucou \
 strings -n 6 /Applications/Coucou.app/Contents/MacOS/Coucou | grep -c 'com.stablyai.orca'</code></pre>
     <div class="expect">
       <span class="k">Check 1</span><span><code>valid on disk</code>, identifier <code>fr.louisraille.NotchBuddy</code>, flags containing <code>adhoc</code>.</span>
-      <span class="k">Check 2</span><span>Only anthropic.com, openai.com, googleapis.com, github.com, vercel.com, stripe.com, resend.com, notion.com, notion.so and cal.com. These are compiled in whether or not you use the features.</span>
+      <span class="k">Check 2</span><span>Only anthropic.com, openai.com, googleapis.com, github.com, vercel.com, stripe.com, resend.com, notion.com, notion.so, cal.com and z.ai. These are compiled in whether or not you use the features.</span>
       <span class="k">Check 3</span><span>At least 1. Zero means the unpatched source was built.</span>
     </div>
   </div>
@@ -454,6 +458,25 @@ EOF</code></pre>
     </table></div>
     <p>Interactive pi sessions without a brief get a pill named after the working directory, or after the session name when you pass <code>--name</code>. Force a tag with <code>COUCOU_AGENT=my-tag</code>, or silence one process with <code>COUCOU_DISABLE=1</code>. Tags are lowercase letters, digits and hyphens, at most 24 characters, which is what Coucou accepts.</p>
     <div class="callout"><b>Tested on this Mac on 2026-10-02</b> with pi 0.87.1 and glm-5.3: tool events, the final message, event ordering, and the error path with an unreachable provider. The full dispatch sequence was exercised against a simulated socket since no worker was running at the time. Nothing in the extension leaves the machine; it writes only to Coucou's owner-only socket.</div>
+  </div>
+</section>
+
+<section id="usage">
+  <div class="step-head">
+    <div class="step-num">08b</div>
+    <div><h2>Turn on the usage card</h2><p class="goal">Two clicks in Settings. Claude limits arrive through a status-line relay, GLM quota through a poller.</p></div>
+  </div>
+  <div class="body">
+    <p>The right panel shows a usage card once either source is configured, and folds it into a one-line strip whenever pi worker pills are present. Both switches live in Settings → <b>Usage card</b>.</p>
+    <ol class="plain">
+      <li><b>Install relay.</b> Coucou wraps your current Claude Code status line, which Orca owns, in a tiny script that forwards each update to Coucou's socket and then runs Orca's script unchanged. It saves the previous command to <code>statusline-upstream.sh</code> and backs up <code>settings.json</code> first. Values appear after the next Claude Code reply, and only on Pro or Max logins.</li>
+      <li><b>Import from pi.</b> Reads the Z.ai coding-plan key from pi's provider config into the Keychain and polls the quota endpoint every minute. No tokens are consumed by the poll.</li>
+    </ol>
+    <div class="expect">
+      <span class="k">Verify</span><span><code>tail -3 ~/Library/Logs/NotchBuddy/nb.log</code> shows a <code>StatusLine ctx=… 5h=… 7d=…</code> line after a Claude reply and a <code>Zai 5h=… wk=… level=…</code> line within a minute of importing the key.</span>
+      <span class="k">Thresholds</span><span>Bars turn amber at 75 percent and red at 90. Crossing 90 plays the rate-limit sound once. The main card header shows the focused session's context as <code>ctx NN%</code>.</span>
+      <span class="k">If Orca rewrites the status line</span><span>The Usage card box turns red with "relay not installed". Click Install relay again.</span>
+    </div>
   </div>
 </section>
 

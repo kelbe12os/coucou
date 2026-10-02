@@ -107,7 +107,9 @@ if git -C "$SRC" apply --check --reverse "$PATCH" >/dev/null 2>&1; then
   ok "patch already applied"
 elif git -C "$SRC" apply --check "$PATCH" >/dev/null 2>&1; then
   git -C "$SRC" apply "$PATCH"
-  git -C "$SRC" -c user.name=coucou-orca -c user.email=coucou-orca@local commit -qam "Accept Orca panes as a Claude Code host"
+  # -A, not -a: the patch creates new source files and those must be in the commit too.
+  git -C "$SRC" add -A NotchBuddy/Sources
+  git -C "$SRC" -c user.name=coucou-orca -c user.email=coucou-orca@local commit -qm "Apply coucou-orca.patch"
   ok "patch applied and committed"
 else
   die "patch does not apply at $(git -C "$SRC" rev-parse --short HEAD); upstream moved. See docs/rebuild-plan.html step 02 (apply the three edits by hand) or build with --ref 8a5c263"
