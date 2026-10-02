@@ -34,7 +34,8 @@ CONF="$DEST/relay.conf"
 SETTINGS="$HOME/.claude/settings.json"
 
 json_tool() {
-  if command -v python3 >/dev/null 2>&1; then echo python3
+  # Windows ships a python3 stub that only opens the Store, so test that it really runs.
+  if python3 -c 'import json' >/dev/null 2>&1; then echo python3
   elif command -v powershell.exe >/dev/null 2>&1; then echo powershell
   else echo none; fi
 }
@@ -58,7 +59,7 @@ def ours(g): return any("nb-hook-remote" in (h.get("command") or "") for h in (g
 for ev, t in events:
     groups = [g for g in (hooks.get(ev) or []) if not ours(g)]
     if mode == "install":
-        groups.append({"hooks": [{"type": "command", "command": '"%s"' % hook, "timeout": t}]})
+        groups.append({"hooks": [{"type": "command", "command": 'sh "%s"' % hook, "timeout": t}]})
     if groups: hooks[ev] = groups
     else: hooks.pop(ev, None)
 if not hooks: s.pop("hooks", None)
@@ -74,7 +75,7 @@ if (-not \$s.hooks) { \$s | Add-Member -NotePropertyName hooks -NotePropertyValu
 foreach (\$e in \$events) {
   \$ev = \$e[0]; \$t = \$e[1]
   \$groups = @(); if (\$s.hooks.PSObject.Properties[\$ev]) { \$groups = @(\$s.hooks.\$ev | Where-Object { -not (\$_.hooks | Where-Object { \$_.command -like '*nb-hook-remote*' }) }) }
-  if (\$mode -eq 'install') { \$groups += [pscustomobject]@{ hooks = @([pscustomobject]@{ type='command'; command=('\"' + \$hook + '\"'); timeout=\$t }) } }
+  if (\$mode -eq 'install') { \$groups += [pscustomobject]@{ hooks = @([pscustomobject]@{ type='command'; command=('sh \"' + \$hook + '\"'); timeout=\$t }) } }
   if (\$s.hooks.PSObject.Properties[\$ev]) { \$s.hooks.PSObject.Properties.Remove(\$ev) }
   if (\$groups.Count -gt 0) { \$s.hooks | Add-Member -NotePropertyName \$ev -NotePropertyValue \$groups }
 }

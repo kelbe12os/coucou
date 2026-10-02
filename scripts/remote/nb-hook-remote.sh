@@ -59,7 +59,7 @@ decision=$(printf '%s' "$resp" | sed -n 's/.*"permissionDecision"[[:space:]]*:[[
 
 emit_always() {
   # Carry Claude's suggested rules so "Always" persists, when a JSON-capable runtime exists.
-  if command -v python3 >/dev/null 2>&1; then
+  if python3 -c 'import json' >/dev/null 2>&1; then
     printf '%s' "$payload" | python3 -c '
 import json, sys
 p = json.load(sys.stdin)
