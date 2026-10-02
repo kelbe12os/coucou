@@ -66,7 +66,7 @@ Do not build or test anything else. `shellcheck` is not installed; do not instal
 ## Environment
 - macOS (Apple silicon), zsh login shell; scripts must target `/bin/bash` (bash 3.2 is the
   system bash: no associative arrays, no `mapfile`, no `${var,,}`; use POSIX-ish bash).
-- Repository root: `~/Workspaces/Code/coucou-orca`, a git repo on branch `main`
+- Repository root: `<repo>`, a git repo on branch `main`
   with one commit. Layout today:
   ```
   .gitignore                 (ignores build/, node_modules/, .DS_Store)

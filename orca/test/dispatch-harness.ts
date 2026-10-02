@@ -17,7 +17,7 @@ const handlers: Record<string, Function[]> = {};
 const fakePi = { on(ev: string, h: Function) { (handlers[ev] ||= []).push(h); return () => {}; } };
 const fire = async (ev: string, e: any) => { for (const h of handlers[ev] || []) await h(e, ctx); await new Promise((r) => setTimeout(r, 40)); };
 
-const ctx = { cwd: "~/Workspaces/Code/dep-platform",
+const ctx = { cwd: "/Users/example/Workspaces/project",
   sessionManager: { getSessionId: () => "sess-1234", getSessionName: () => undefined } };
 
 const mod = await import(process.argv[2]);

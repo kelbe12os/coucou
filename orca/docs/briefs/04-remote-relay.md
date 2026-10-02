@@ -63,7 +63,7 @@ Run `xcodegen` once after creating the new file. No unit tests exist; a clean
 - macOS, Apple silicon, Xcode 27.0, `xcodegen` on PATH. Swift 6, `-strict-concurrency=complete`.
   `AppState`, the views and `HookServer`'s event methods are `@MainActor`. The Network framework
   (`import Network`) is available; the deployment target is macOS 15.
-- Outer repo `~/Workspaces/Code/coucou-orca`; nested checkout `build/coucou` on
+- Outer repo `<repo>`; nested checkout `build/coucou` on
   branch `orca` with the fork's patch applied (Orca panes, chat via Claude Code, pi pills, usage
   card). The app is installed and running on this Mac; you do not touch it.
 - The socket protocol you bridge to (verified from the code, Appendix B): a client connects to

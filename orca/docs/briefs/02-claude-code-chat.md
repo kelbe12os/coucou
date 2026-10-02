@@ -65,7 +65,7 @@ is the acceptance criterion. Do not build any other scheme or configuration.
 
 ## Environment
 - macOS, Apple silicon, Xcode 27.0 at `/Applications/Xcode.app`, `xcodegen` on PATH.
-- Outer repo: `~/Workspaces/Code/coucou-orca` (branch `main`). Inside it,
+- Outer repo: `<repo>` (branch `main`). Inside it,
   `build/coucou` is a separate git checkout of upstream Coucou (gitignored by the outer repo)
   on branch `orca`, which already carries the fork's patch. You edit files there.
 - The project uses Swift 6 with `-strict-concurrency=complete`. `AppState`, `ClaudeService` and

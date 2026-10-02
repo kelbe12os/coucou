@@ -72,7 +72,7 @@ Run `xcodegen` once after creating the two new files. No unit tests exist; a cle
 - macOS, Apple silicon, Xcode 27.0, `xcodegen` on PATH. Swift 6, `-strict-concurrency=complete`.
   `AppState`, `HookServer`'s event methods, `ClaudeService` and all views are `@MainActor`;
   pollers follow the `@unchecked Sendable` + `DispatchQueue.main.async` pattern in Appendix C.
-- Outer repo `~/Workspaces/Code/coucou-orca`; nested checkout `build/coucou` on
+- Outer repo `<repo>`; nested checkout `build/coucou` on
   branch `orca` with the fork's patch already applied (Orca panes, Claude Code chat provider,
   pi pills). The app is installed and running on this Mac; you do not touch it.
 - Verified facts you build on (do not re-verify):
