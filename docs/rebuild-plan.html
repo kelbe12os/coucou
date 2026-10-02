@@ -187,8 +187,8 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
     <span>repo <b>github.com/Louis-CFM/coucou</b></span>
     <span>audited <b>2026-10-02</b> at <b>8a5c263</b></span>
     <span>host <b>Orca 1.4.218 · com.stablyai.orca</b></span>
-    <span>patch <b>~/Desktop/coucou-orca.patch</b></span>
-    <span>pi extension <b>~/Desktop/coucou-status.ts</b></span>
+    <span>patch <b>coucou-orca/patches/coucou-orca.patch</b></span>
+    <span>pi extension <b>coucou-orca/pi/coucou-status.ts</b></span>
   </div>
   <div class="scope-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:22px">
     <div class="scope in" style="display:block"><h3>In scope</h3><ul>
@@ -246,7 +246,7 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
         <tr><td>Click pill → focuses</td><td>VS Code</td><td>VS Code</td><td><span class="pill ok">Orca</span></td></tr>
       </tbody>
     </table></div>
-    <p>The patch changes 19 lines across two files. It replaces the two VS Code checks with a small allowlist that includes Orca, and makes the Claude pill focus Orca instead of VS Code. The full diff is in step 02.</p>
+    <p>The patch touches four files. It replaces the two VS Code checks with a small allowlist that includes Orca, makes the Claude pill and the idle card's button focus Orca, renames the idle slot from "VS Code · Integration" to "Orca · Claude Code host", shows hooks status instead of a chat-key status on that card, and starts with no service pills until you check some in Settings. The diff summary is in step 02.</p>
   </div>
 </section>
 
@@ -272,7 +272,7 @@ brew install xcodegen</code></pre>
 <section id="source">
   <div class="step-head">
     <div class="step-num">02</div>
-    <div><h2>Get the source and apply the Orca patch</h2><p class="goal">Clone, branch, apply, commit. The patch has been verified to apply cleanly at 8a5c263.</p></div>
+    <div><h2>Get the source and apply the Orca patch</h2><p class="goal">Clone, branch, apply, commit. The patch applies cleanly at 8a5c263 and has been built and run on this Mac.</p></div>
   </div>
   <div class="body">
     <pre><button class="copy" type="button">copy</button><code>mkdir -p ~/src && cd ~/src
@@ -280,77 +280,21 @@ git clone https://github.com/Louis-CFM/coucou.git
 cd coucou
 git log -1 --format='%h  %ad  %s' --date=short
 git checkout -b orca
-git apply --check ~/Desktop/coucou-orca.patch && git apply ~/Desktop/coucou-orca.patch
+git apply --check ~/Workspaces/Code/coucou-orca/patches/coucou-orca.patch && git apply ~/Workspaces/Code/coucou-orca/patches/coucou-orca.patch
 git commit -am "Accept Orca panes as a Claude Code host; focus Orca from the Claude pill"</code></pre>
     <div class="expect">
       <span class="k">Audited at</span><span><code>8a5c263</code>. If the clone is newer and <code>--check</code> fails, the upstream lines moved. Apply the three edits by hand from the diff below. They're short.</span>
       <span class="k">Also read</span><span>If the clone is newer, skim <code>git diff 8a5c263 HEAD -- NotchBuddy/Sources/App/HookServer.swift</code> before building. That file owns the socket, the settings writer and approvals.</span>
     </div>
     <details>
-      <summary>coucou-orca.patch, full diff</summary>
-      <pre><button class="copy" type="button">copy</button><code>diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
---- a/NotchBuddy/Sources/App/HookServer.swift
-+++ b/NotchBuddy/Sources/App/HookServer.swift
-@@ -176,9 +176,8 @@ final class HookServer: @unchecked Sendable {
+      <summary>coucou-orca.patch, what it changes</summary>
+      <pre><code>NotchBuddy/Sources/App/HookServer.swift        | 18 ++++++----   accept Orca panes (allowlist), both gates
+NotchBuddy/Sources/App/IslandViewContent.swift | 34 ++++-------   Claude pill and "Open Orca" focus Orca; hooks status on idle card
+NotchBuddy/Sources/App/PillCatalog.swift       |  4 +-           slot named "Orca · Claude Code host"
+NotchBuddy/Sources/App/AppState.swift          |  3 +-           no service pills by default
+4 files changed, 29 insertions(+), 30 deletions(-)
 
-         let termProgram = payload["term_program"] as? String ?? ""
-         let bundleId    = payload["bundle_id"]    as? String ?? ""
-<span class="del">-        let isVSCode = termProgram.lowercased().contains("vscode") ||
--                       bundleId.lowercased().contains("vscode")
--        // External agents bypass the VS Code filter (their relay runs in any terminal).</span>
-<span class="add">+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
-+        // External agents bypass the terminal filter (their relay runs in any terminal).</span>
-         guard isExternalAgent || isVSCode else {
-             nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
-             return
-@@ -339,6 +338,16 @@ final class HookServer: @unchecked Sendable {
-         // Already compact and non-alert: Mochi state update is enough, no expand
-     }
-
-<span class="add">+    /// Terminals whose Claude Code sessions show in the island and get approval cards.
-+    /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
-+    /// bundle com.stablyai.orca). Add more tokens here to support other terminals.
-+    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca"]
-+
-+    static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
-+        let t = termProgram.lowercased(), b = bundleId.lowercased()
-+        return supportedTerminalTokens.contains { t.contains($0) || b.contains($0) }
-+    }
-+</span>
-     // MARK: - Permission request (blocking — Claude Code waits for decision)
-
-     @MainActor
-@@ -364,8 +373,7 @@ final class HookServer: @unchecked Sendable {
-
-         let termProgram = payload["term_program"] as? String ?? ""
-         let bundleId    = payload["bundle_id"]    as? String ?? ""
-<span class="del">-        let isVSCode = termProgram.lowercased().contains("vscode") ||
--                       bundleId.lowercased().contains("vscode")</span>
-<span class="add">+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)</span>
-         guard isVSCode else {
-             Task.detached { [weak self] in
-                 self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
-diff --git a/NotchBuddy/Sources/App/IslandViewContent.swift b/NotchBuddy/Sources/App/IslandViewContent.swift
---- a/NotchBuddy/Sources/App/IslandViewContent.swift
-+++ b/NotchBuddy/Sources/App/IslandViewContent.swift
-@@ -123,11 +123,14 @@ struct OverviewView: View {
-         guard let task else { return }
-         switch task.id {
-         case "integration_claude":
-<span class="del">-            let vscodeBundleId = "com.microsoft.VSCode"
--            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == vscodeBundleId }) {</span>
-<span class="add">+            // Jump to the app hosting the Claude Code session: Orca first, then VS Code.
-+            let hostBundleIds = ["com.stablyai.orca", "com.microsoft.VSCode"]
-+            if let app = hostBundleIds.compactMap({ id in
-+                NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == id }
-+            }).first {</span>
-                 app.activate(options: .activateIgnoringOtherApps)
-             } else {
-<span class="del">-                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Visual Studio Code.app"))</span>
-<span class="add">+                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Orca.app"))</span>
-             }
-         case "integration_resend":
-             NSWorkspace.shared.open(URL(string: "https://resend.com/emails")!)</code></pre>
+<span class="c"># The full diff lives at patches/coucou-orca.patch in the coucou-orca repo.</span></code></pre>
     </details>
     <p>Want sessions from a plain terminal too? Add its <code>TERM_PROGRAM</code> value to the allowlist, for example <code>"ghostty"</code>. That's the only place to change.</p>
   </div>
@@ -482,8 +426,8 @@ EOF</code></pre>
     <div><h2>Install the pi extension</h2><p class="goal">One file in pi's extensions folder. Every pi process loads it, including the glm-5.3 workers Orca dispatches.</p></div>
   </div>
   <div class="body">
-    <p>pi fires none of Claude Code's hooks, but it has an extension system, and Orca already uses it: <code>~/.pi/agent/extensions</code> holds Orca's own status extension. The file at <code>~/Desktop/coucou-status.ts</code> sits next to it and relays pi's events to Coucou's socket, tagged so Coucou gives each worker its own pill.</p>
-    <pre><button class="copy" type="button">copy</button><code>cp ~/Desktop/coucou-status.ts ~/.pi/agent/extensions/coucou-status.ts</code></pre>
+    <p>pi fires none of Claude Code's hooks, but it has an extension system, and Orca already uses it: <code>~/.pi/agent/extensions</code> holds Orca's own status extension. The file at <code>coucou-orca/pi/coucou-status.ts</code> goes next to it and relays pi's events to Coucou's socket, tagged so Coucou gives each worker its own pill.</p>
+    <pre><button class="copy" type="button">copy</button><code>cp ~/Workspaces/Code/coucou-orca/pi/coucou-status.ts ~/.pi/agent/extensions/coucou-status.ts</code></pre>
     <p>No restart of anything is needed. pi loads extensions at process start, so the next pi you or Orca launch picks it up. Verify with a one-word run from a scratch folder while Coucou is open:</p>
     <pre><button class="copy" type="button">copy</button><code>cd /tmp && pi --no-session --model zai/glm-5.3 -p "Reply with exactly one word: pong"</code></pre>
     <div class="expect">
@@ -582,7 +526,7 @@ rm -f ~/.claude/settings.json.bak-*   <span class="c"># Coucou's own backups, op
 </main>
 </div>
 
-<footer>Based on a read of the macOS Swift source at 8a5c263, the installed hook relay, the published v0.1.0 zip, Orca 1.4.218's hook script and the current contents of this Mac's Claude settings, carried out 2026-10-02. The patch is saved at ~/Desktop/coucou-orca.patch.</footer>
+<footer>Based on a read of the macOS Swift source at 8a5c263, the installed hook relay, the published v0.1.0 zip, Orca 1.4.218's hook script and the current contents of this Mac's Claude settings, carried out 2026-10-02. The patch and extension live in ~/Workspaces/Code/coucou-orca, with scripts that run every step.</footer>
 </div>
 
 <script>
