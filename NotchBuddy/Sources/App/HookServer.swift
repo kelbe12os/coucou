@@ -536,19 +536,20 @@ final class HookServer: @unchecked Sendable {
     // MARK: - French step labels
 
     private func frenchStep(tool: String, input: [String: Any]) -> String {
+        // Step labels shown in the ticker. Fork: English, close to the tool names Claude Code uses.
         let labels: [String: String] = [
-            "Bash":       "Exécute",
-            "Read":       "Lit",
-            "Write":      "Écrit",
-            "Edit":       "Modifie",
-            "Glob":       "Cherche",
-            "Grep":       "Recherche",
-            "WebSearch":  "Recherche web",
-            "WebFetch":   "Récupère",
-            "TodoWrite":  "Tâches",
+            "Bash":       "Bash",
+            "Read":       "Read",
+            "Write":      "Write",
+            "Edit":       "Edit",
+            "Glob":       "Find",
+            "Grep":       "Search",
+            "WebSearch":  "Web search",
+            "WebFetch":   "Fetch",
+            "TodoWrite":  "Todo",
             "Task":       "Agent",
-            "LS":         "Liste",
-            "MultiEdit":  "Modifie",
+            "LS":         "List",
+            "MultiEdit":  "Edit",
             "NotebookEdit": "Notebook",
         ]
         let label = labels[tool] ?? tool

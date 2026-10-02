@@ -23,9 +23,9 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAccessibilityUsageDescription</key>
-	<string>Pour lire le titre de la fenêtre active et l'attacher comme contexte.</string>
+	<string>Coucou reads the front window's title to attach it as chat context.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Pour sauter au terminal et envoyer des mails.</string>
+	<string>Coucou brings your terminal to the front and can send a dropped file by email.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>

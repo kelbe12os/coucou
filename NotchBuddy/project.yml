@@ -67,8 +67,8 @@ targets:
         LSUIElement: YES
         NSHighResolutionCapable: YES
         NSSupportsAutomaticGraphicsSwitching: YES
-        NSAppleEventsUsageDescription: "Pour sauter au terminal et envoyer des mails."
-        NSAccessibilityUsageDescription: "Pour lire le titre de la fenêtre active et l'attacher comme contexte."
+        NSAppleEventsUsageDescription: "Coucou brings your terminal to the front and can send a dropped file by email."
+        NSAccessibilityUsageDescription: "Coucou reads the front window's title to attach it as chat context."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fr.louisraille.NotchBuddy
