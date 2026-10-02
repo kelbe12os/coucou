@@ -889,7 +889,7 @@ struct ModelPickerView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Provider chips
             HStack(spacing: 6) {
-                ForEach(ChatProvider.allCases, id: \.self) { provider in
+                ForEach(ChatProvider.allCases.filter { $0.isAvailable || $0 == state.chatProvider }, id: \.self) { provider in
                     Button {
                         guard provider != state.chatProvider else { return }
                         withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
@@ -904,6 +904,8 @@ struct ModelPickerView: View {
                                 .frame(width: 7, height: 7)
                             Text(provider.displayName)
                                 .font(.system(size: 12, weight: state.chatProvider == provider ? .semibold : .regular))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)

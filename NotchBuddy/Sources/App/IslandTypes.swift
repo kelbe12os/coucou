@@ -106,6 +106,14 @@ enum ChatProvider: String, CaseIterable, Codable {
         case .openai:    "openai-api-key"
         }
     }
+
+    /// Usable on this Mac: Claude Code when its CLI is installed, an API provider when its key is stored.
+    var isAvailable: Bool {
+        switch self {
+        case .claudeCode: return ClaudeCodeCLI.locate() != nil
+        default:          return !(KeychainStore.shared.get(keychainKey) ?? "").isEmpty
+        }
+    }
 }
 
 // MARK: - View dimensions (from VIEWS in prototype)
