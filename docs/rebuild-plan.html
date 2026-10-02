@@ -184,7 +184,7 @@ footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);font-si
   <h1>Coucou Rebuild Plan</h1>
   <p class="lede">Build Coucou from audited source with a three-site patch so it recognises Claude Code sessions running in Orca panes. Nothing else gets configured.</p>
   <div class="meta">
-    <span>repo <b>github.com/Louis-CFM/coucou</b></span>
+    <span>fork <b>github.com/kelbe12os/coucou</b> · branch orca</span>
     <span>audited <b>2026-10-02</b> at <b>8a5c263</b></span>
     <span>host <b>Orca 1.4.218 · com.stablyai.orca</b></span>
     <span>patch <b>coucou-orca/patches/coucou-orca.patch</b></span>
@@ -277,16 +277,14 @@ brew install xcodegen</code></pre>
 <section id="source">
   <div class="step-head">
     <div class="step-num">02</div>
-    <div><h2>Get the source and apply the Orca patch</h2><p class="goal">Clone, branch, apply, commit. The patch applies cleanly at 8a5c263 and has been built and run on this Mac.</p></div>
+    <div><h2>Get the source</h2><p class="goal">The changes now live as commits on the <code>orca</code> branch of your fork, merged with upstream main. The patch file is a derived summary.</p></div>
   </div>
   <div class="body">
-    <pre><button class="copy" type="button">copy</button><code>mkdir -p ~/src && cd ~/src
-git clone https://github.com/Louis-CFM/coucou.git
-cd coucou
-git log -1 --format='%h  %ad  %s' --date=short
-git checkout -b orca
-git apply --check ~/Workspaces/Code/coucou-orca/patches/coucou-orca.patch && git apply ~/Workspaces/Code/coucou-orca/patches/coucou-orca.patch
-git commit -am "Accept Orca panes as a Claude Code host; focus Orca from the Claude pill"</code></pre>
+    <pre><button class="copy" type="button">copy</button><code>git clone https://github.com/kelbe12os/coucou.git ~/Workspaces/Code/coucou
+cd ~/Workspaces/Code/coucou && git checkout orca
+git remote add upstream https://github.com/Louis-CFM/coucou.git
+git log --oneline upstream/main..orca | head        <span class="c"># the fork's own commits</span></code></pre>
+    <p>Day to day you don't need this clone: <code>scripts/build.sh --install</code> in coucou-orca clones the fork's <code>orca</code> branch into <code>build/coucou</code> and builds it. The clone above is where you merge upstream and commit new changes.</p>
     <div class="expect">
       <span class="k">Audited at</span><span><code>8a5c263</code>. If the clone is newer and <code>--check</code> fails, the upstream lines moved. Apply the three edits by hand from the diff below. They're short.</span>
       <span class="k">Also read</span><span>If the clone is newer, skim <code>git diff 8a5c263 HEAD -- NotchBuddy/Sources/App/HookServer.swift</code> before building. That file owns the socket, the settings writer and approvals.</span>
@@ -526,27 +524,19 @@ EOF</code></pre>
 <section id="update">
   <div class="step-head">
     <div class="step-num">10</div>
-    <div><h2>Updating</h2><p class="goal">Rebase the orca branch, read the hook server diff, rebuild.</p></div>
+    <div><h2>Updating from upstream</h2><p class="goal">Merge upstream main into the fork's orca branch, build, push, reinstall.</p></div>
   </div>
   <div class="body">
-    <pre><button class="copy" type="button">copy</button><code>cd ~/src/coucou
-git fetch origin
-git log --oneline HEAD..origin/main -- NotchBuddy/Sources/App/HookServer.swift
-git rebase origin/main</code></pre>
+    <pre><button class="copy" type="button">copy</button><code>cd ~/Workspaces/Code/coucou
+git fetch upstream
+git log --oneline HEAD..upstream/main -- NotchBuddy/Sources/App/HookServer.swift
+git merge upstream/main          <span class="c"># resolve conflicts if any</span>
+git push origin orca</code></pre>
     <div class="expect">
-      <span class="k">Conflict</span><span>Only happens if upstream touches the two VS Code checks or the Claude pill handler. Re-apply the same three edits and <code>git rebase --continue</code>.</span>
-      <span class="k">Upstream fix</span><span>If a future upstream release accepts other terminals natively, drop the branch and build <code>main</code> instead.</span>
+      <span class="k">Conflict</span><span>Most likely in the hook server's terminal routing, as happened with upstream's Cursor support on 2026-10-02: keep upstream's structure and route every supported host to the Claude pill.</span>
+      <span class="k">Then</span><span><code>scripts/build.sh --install</code>, <code>scripts/verify.sh</code> and <code>scripts/export-patch.sh</code> in coucou-orca. The patch file stays a readable summary of the fork.</span>
     </div>
-    <p>Then repeat steps 03 to 05, quitting Coucou before copying over the app.</p>
-    <pre><button class="copy" type="button">copy</button><code>cd ~/src/coucou/NotchBuddy && xcodegen
-xcodebuild -project NotchBuddy.xcodeproj -scheme NotchBuddy \
-  -configuration Release -derivedDataPath build build \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
-osascript -e 'quit app "Coucou"'
-codesign --force --deep --sign - build/Build/Products/Release/Coucou.app
-rm -rf /Applications/Coucou.app
-ditto build/Build/Products/Release/Coucou.app /Applications/Coucou.app
-open /Applications/Coucou.app</code></pre>
+
     <p>If the relay script changed upstream, open Settings and click Install hooks again. The app rewrites <code>nb-hook</code> and shows a settings diff, which should be empty.</p>
   </div>
 </section>

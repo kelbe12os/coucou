@@ -11,7 +11,7 @@ Build Coucou (upstream NotchBuddy) from source with the Orca patch.
 
   --check      check prerequisites only, then exit (0 ok, 1 not ok)
   --install    also install the built app to /Applications/Coucou.app
-  --ref REF    upstream ref to build (default: 8a5c263; e.g. --ref main)
+  --ref REF    ref to build from the fork (default: orca; e.g. --ref main for plain upstream)
   --src DIR    source checkout dir (default: build/coucou inside this repo)
   --verbose    show full xcodegen/xcodebuild output
 EOF
@@ -91,6 +91,11 @@ if [ ! -d "$SRC/.git" ]; then
   log "clone $UPSTREAM_URL -> $SRC"
   git clone "$UPSTREAM_URL" "$SRC"
 else
+  # An older checkout may still point at the original upstream; follow the configured URL.
+  if [ "$(git -C "$SRC" remote get-url origin)" != "$UPSTREAM_URL" ]; then
+    log "origin -> $UPSTREAM_URL"
+    git -C "$SRC" remote set-url origin "$UPSTREAM_URL"
+  fi
   log "fetch origin in $SRC"
   git -C "$SRC" fetch --quiet origin
 fi
@@ -101,9 +106,12 @@ fi
 git -C "$SRC" checkout -q -B orca "$CHECKOUT"
 log "building at: $(git -C "$SRC" log -1 --format='%h %ad %s' --date=short)"
 
-# Step 3: patch (idempotent).
+# Step 3: patch (idempotent). The fork's "orca" branch already contains every change, so the
+# patch only matters when building a plain upstream ref; the marker below tells the two apart.
 PATCH="$REPO/patches/coucou-orca.patch"
-if git -C "$SRC" apply --check --reverse "$PATCH" >/dev/null 2>&1; then
+if grep -q 'com.stablyai.orca' "$SRC/NotchBuddy/Sources/App/HookServer.swift" 2>/dev/null; then
+  ok "source already carries the Orca changes (fork branch); patch step skipped"
+elif git -C "$SRC" apply --check --reverse "$PATCH" >/dev/null 2>&1; then
   ok "patch already applied"
 elif git -C "$SRC" apply --check "$PATCH" >/dev/null 2>&1; then
   git -C "$SRC" apply "$PATCH"

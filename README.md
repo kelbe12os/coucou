@@ -5,8 +5,10 @@ report pi worker progress to it.
 
 ## What this is
 
-Coucou is an open-source macOS notch companion that shows live Claude Code sessions; this repo
-rebuilds it from source at a pinned upstream commit. The Orca patch
+Coucou is an open-source macOS notch companion that shows live Claude Code sessions. The source
+of truth for this fork is the `orca` branch of https://github.com/kelbe12os/coucou (upstream
+Louis-CFM/coucou plus our commits, merged with upstream main); this repo holds the tooling that
+builds and installs it, the pi extension, the remote relay scripts and the docs. The Orca patch
 (`patches/coucou-orca.patch`) teaches that build to accept Orca terminal panes as a Claude Code
 host, so sessions running inside Orca show up like any other, names the idle slot after Orca,
 and adds a chat provider that runs the local `claude -p` so the notch chat works through your
@@ -20,7 +22,8 @@ plan and audit; `docs/wireframe.html` is the UI walkthrough.
 ```
 scripts/                     build.sh, verify.sh, install-pi-extension.sh, hooks-check.sh,
                              uninstall.sh; lib.sh holds shared helpers
-patches/coucou-orca.patch    the Orca patch (applies to upstream commit 8a5c263)
+patches/coucou-orca.patch    derived: the fork's diff against upstream (scripts/export-patch.sh)
+scripts/export-patch.sh      regenerate that patch from the fork checkout
 pi/coucou-status.ts          the pi extension (installed to ~/.pi/agent/extensions/)
 test/run-tests.sh            test suite; runs on any Mac, no Xcode needed
 test/dispatch-harness.ts     synthetic 21-event test of the extension (bun)
@@ -39,7 +42,7 @@ build/                       source checkout created by build.sh (gitignored)
    `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer && sudo xcodebuild -license accept`,
    and `brew install xcodegen`.
 2. `scripts/build.sh --check` — confirm the prerequisites.
-3. `scripts/build.sh --install` — clone, patch, build, adhoc-sign and install Coucou.app.
+3. `scripts/build.sh --install` — clone the fork's `orca` branch, build, adhoc-sign and install Coucou.app.
 4. `scripts/verify.sh` — check the installed app (signature, host allowlist, patch, runtime
    files).
 5. `scripts/hooks-check.sh --backup`, then turn on the Claude Code hooks in Coucou's own
@@ -50,6 +53,20 @@ build/                       source checkout created by build.sh (gitignored)
    `scripts/remote/install-remote-hooks.sh --urls "http://<mac-tailnet-name>:6771 …" --token <token>`.
 8. Chat: open the island, click the speech bubble. The provider defaults to Claude Code
    (Settings → "Claude Code (local)" shows the detected binary). An Anthropic key is optional.
+
+## Updating from upstream
+
+The fork's `orca` branch is a normal git branch, so new upstream features arrive by merging:
+
+```
+cd ~/Workspaces/Code/coucou          # clone of the fork, remote "upstream" = Louis-CFM/coucou
+git fetch upstream && git merge upstream/main   # resolve conflicts if any, build to check
+git push origin orca
+cd ~/Workspaces/Code/coucou-orca && scripts/build.sh --install && scripts/verify.sh && scripts/export-patch.sh
+```
+
+Changes to the app go into the fork as commits; `scripts/export-patch.sh` keeps the patch file
+here as a readable summary of everything the fork changes.
 
 ## Tests
 

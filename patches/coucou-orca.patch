@@ -36,7 +36,7 @@ index f94af2b..205dbf7 100644
                                                 name: .openFullSettings, object: nil)
      }
 diff --git a/NotchBuddy/Sources/App/AppState.swift b/NotchBuddy/Sources/App/AppState.swift
-index 3c1465c..14a9ad6 100644
+index 2ac8e1b..69da2e7 100644
 --- a/NotchBuddy/Sources/App/AppState.swift
 +++ b/NotchBuddy/Sources/App/AppState.swift
 @@ -60,7 +60,7 @@ final class AppState: ObservableObject {
@@ -101,7 +101,7 @@ index 3c1465c..14a9ad6 100644
 @@ -194,7 +209,8 @@ final class AppState: ObservableObject {
      }
  
-     // Active integration pills (VS Code excluded — always on). Max 4.
+     // Active integration pills (main workspace pill excluded). Max 4.
 -    @Published var activeIntegrations: Set<String> = ["integration_resend", "integration_n8n", "integration_vercel", "integration_github"] {
 +    // Fork default: no service pills until the user checks them in Settings → Active pills.
 +    @Published var activeIntegrations: Set<String> = [] {
@@ -516,10 +516,10 @@ index 9a47a33..9d08e06 100644
      static func handle(urls: [URL], state: AppState) async {
          guard let url = urls.first else { return }
 diff --git a/NotchBuddy/Sources/App/HookServer.swift b/NotchBuddy/Sources/App/HookServer.swift
-index 41b71c0..f6423ad 100644
+index a8afb91..8a11f2e 100644
 --- a/NotchBuddy/Sources/App/HookServer.swift
 +++ b/NotchBuddy/Sources/App/HookServer.swift
-@@ -158,13 +158,44 @@ final class HookServer: @unchecked Sendable {
+@@ -206,6 +206,34 @@ final class HookServer: @unchecked Sendable {
      // View switches only happen if VS Code (or the agent pill) is currently focused.
      // When not focused: state updates animate the mini bot in the pill; badge shown for alerts.
  
@@ -554,7 +554,9 @@ index 41b71c0..f6423ad 100644
      @MainActor
      private func processEvent(name: String, payload: [String: Any]) {
          let state = AppState.shared
-         let sessionId = payload["session_id"] as? String ?? "unknown"
+@@ -213,8 +241,11 @@ final class HookServer: @unchecked Sendable {
+                      ?? payload["conversation_id"] as? String
+                      ?? "unknown"
          let cwd = payload["cwd"] as? String ?? ""
 -        let rawName = URL(fileURLWithPath: cwd).lastPathComponent
 -        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
@@ -566,21 +568,36 @@ index 41b71c0..f6423ad 100644
  
          // Determine which pill this event belongs to.
          // coucou_agent must be lowercase, digits and hyphens, ≤ 24 chars.
-@@ -176,9 +207,10 @@ final class HookServer: @unchecked Sendable {
+@@ -223,15 +254,15 @@ final class HookServer: @unchecked Sendable {
  
          let termProgram = payload["term_program"] as? String ?? ""
          let bundleId    = payload["bundle_id"]    as? String ?? ""
--        let isVSCode = termProgram.lowercased().contains("vscode") ||
--                       bundleId.lowercased().contains("vscode")
--        // External agents bypass the VS Code filter (their relay runs in any terminal).
-+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
 +        if name == "StatusLine" { processStatusLine(payload); return }
-+
-+        // External agents bypass the terminal filter (their relay runs in any terminal).
-         guard isExternalAgent || isVSCode else {
-             nbLog("Ignored \(name) from \(termProgram.isEmpty ? bundleId : termProgram) (\(projectName))")
-             return
-@@ -339,6 +371,16 @@ final class HookServer: @unchecked Sendable {
+ 
+         // Cursor identified solely by its stable Electron bundle ID.
+         // ToDesktop builds other apps too — do not match on "todesktop" alone.
+         let isCursorEditor = bundleId.lowercased() == "com.todesktop.230313mzl4w4u92"
+-        let isVSCodeEditor = !isCursorEditor && (
+-            termProgram.lowercased().contains("vscode") ||
+-            bundleId.lowercased().contains("vscode"))
++        // Fork: VS Code, Orca panes, Ghostty and the remote relay all route to the Claude Code pill.
++        let isSupportedHost = !isCursorEditor && Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
+ 
+-        // Routing: coucou_agent → external pill; Cursor → agent_cursor; VS Code → integration_claude.
++        // Routing: coucou_agent → external pill; Cursor → agent_cursor; supported host → integration_claude.
+         let agentId: String
+         let isExternalAgent: Bool
+         if let agent = validAgent {
+@@ -240,7 +271,7 @@ final class HookServer: @unchecked Sendable {
+         } else if isCursorEditor {
+             agentId = "agent_cursor"
+             isExternalAgent = false
+-        } else if isVSCodeEditor {
++        } else if isSupportedHost {
+             agentId = "integration_claude"
+             isExternalAgent = false
+         } else {
+@@ -429,6 +460,16 @@ final class HookServer: @unchecked Sendable {
          // Already compact and non-alert: Mochi state update is enough, no expand
      }
  
@@ -597,9 +614,9 @@ index 41b71c0..f6423ad 100644
      // MARK: - Permission request (blocking — Claude Code waits for decision)
  
      @MainActor
-@@ -346,8 +388,11 @@ final class HookServer: @unchecked Sendable {
-         let state = AppState.shared
-         let sessionId = payload["session_id"] as? String ?? "unknown"
+@@ -438,8 +479,11 @@ final class HookServer: @unchecked Sendable {
+                      ?? payload["conversation_id"] as? String
+                      ?? "unknown"
          let cwd       = payload["cwd"]        as? String ?? ""
 -        let rawName   = URL(fileURLWithPath: cwd).lastPathComponent
 -        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
@@ -611,17 +628,21 @@ index 41b71c0..f6423ad 100644
  
          // External agents (coucou_agent) do not yet get an approval card — answering
          // would show a card that looks like a Claude Code request. Reply immediately
-@@ -364,8 +409,7 @@ final class HookServer: @unchecked Sendable {
- 
-         let termProgram = payload["term_program"] as? String ?? ""
+@@ -458,11 +502,9 @@ final class HookServer: @unchecked Sendable {
          let bundleId    = payload["bundle_id"]    as? String ?? ""
--        let isVSCode = termProgram.lowercased().contains("vscode") ||
--                       bundleId.lowercased().contains("vscode")
-+        let isVSCode = Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
-         guard isVSCode else {
+         // Cursor identified solely by its stable Electron bundle ID.
+         let isCursorEditor = bundleId.lowercased() == "com.todesktop.230313mzl4w4u92"
+-        let isVSCodeEditor = !isCursorEditor && (
+-            termProgram.lowercased().contains("vscode") ||
+-            bundleId.lowercased().contains("vscode"))
++        let isSupportedHost = !isCursorEditor && Self.isSupportedTerminal(termProgram: termProgram, bundleId: bundleId)
+         let pillId = isCursorEditor ? "agent_cursor" : "integration_claude"
+-        guard isCursorEditor || isVSCodeEditor else {
++        guard isCursorEditor || isSupportedHost else {
              Task.detached { [weak self] in
                  self?.sendLine(fd: fd, text: #"{"permissionDecision":"ask"}"#)
-@@ -486,6 +530,12 @@ final class HookServer: @unchecked Sendable {
+                 close(fd)
+@@ -624,6 +666,12 @@ final class HookServer: @unchecked Sendable {
  
      // MARK: - Project name alias mapping
  
@@ -634,7 +655,7 @@ index 41b71c0..f6423ad 100644
      private func aliasProjectName(_ name: String) -> String {
          let aliases: [String: String] = [
              "notch-buddy":  "Notch Buddy",
-@@ -498,19 +548,20 @@ final class HookServer: @unchecked Sendable {
+@@ -636,19 +684,20 @@ final class HookServer: @unchecked Sendable {
      // MARK: - French step labels
  
      private func frenchStep(tool: String, input: [String: Any]) -> String {
@@ -666,7 +687,7 @@ index 41b71c0..f6423ad 100644
              "NotebookEdit": "Notebook",
          ]
          let label = labels[tool] ?? tool
-@@ -563,11 +614,35 @@ final class HookServer: @unchecked Sendable {
+@@ -701,11 +750,35 @@ final class HookServer: @unchecked Sendable {
          let pyURL = wrapperURL.deletingLastPathComponent().appendingPathComponent("nb-hook.py")
          try? nbHookPythonGitHub.write(to: pyURL, atomically: true, encoding: .utf8)
          _ = try? FileManager.default.setAttributes([.posixPermissions: 0o755 as NSNumber], ofItemAtPath: pyURL.path)
@@ -702,7 +723,7 @@ index 41b71c0..f6423ad 100644
      /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
      static func hooksNeedUpdate() -> Bool {
          let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-@@ -681,6 +756,81 @@ final class HookServer: @unchecked Sendable {
+@@ -819,6 +892,81 @@ final class HookServer: @unchecked Sendable {
          try newData.write(to: settingsURL, options: .atomic)
      }
  
@@ -784,7 +805,7 @@ index 41b71c0..f6423ad 100644
      // MARK: - App Store: hooks via security-scoped bookmark
  
      #if APPSTORE
-@@ -1394,3 +1544,83 @@ def main():
+@@ -1532,3 +1680,83 @@ def main():
  main()
  sys.exit(0)
  """
@@ -869,10 +890,10 @@ index 41b71c0..f6423ad 100644
 +    sys.exit(0)
 +"""
 diff --git a/NotchBuddy/Sources/App/IslandTypes.swift b/NotchBuddy/Sources/App/IslandTypes.swift
-index 5200af8..00b7de5 100644
+index 5e506a8..75647ec 100644
 --- a/NotchBuddy/Sources/App/IslandTypes.swift
 +++ b/NotchBuddy/Sources/App/IslandTypes.swift
-@@ -66,12 +66,14 @@ enum AgentSource: Equatable {
+@@ -70,12 +70,14 @@ enum AgentSource: Equatable {
  // MARK: - Chat provider
  
  enum ChatProvider: String, CaseIterable, Codable {
@@ -887,7 +908,7 @@ index 5200af8..00b7de5 100644
          case .anthropic: "Anthropic"
          case .google:    "Google"
          case .openai:    "OpenAI"
-@@ -80,6 +82,7 @@ enum ChatProvider: String, CaseIterable, Codable {
+@@ -84,6 +86,7 @@ enum ChatProvider: String, CaseIterable, Codable {
  
      var accentHex: String {
          switch self {
@@ -895,7 +916,7 @@ index 5200af8..00b7de5 100644
          case .anthropic: "#E07950"
          case .google:    "#4285F4"
          case .openai:    "#10A37F"
-@@ -88,6 +91,7 @@ enum ChatProvider: String, CaseIterable, Codable {
+@@ -92,6 +95,7 @@ enum ChatProvider: String, CaseIterable, Codable {
  
      var defaultModel: String {
          switch self {
@@ -903,7 +924,7 @@ index 5200af8..00b7de5 100644
          case .anthropic: "claude-sonnet-4-6"
          case .google:    "gemini-2.0-flash"
          case .openai:    "gpt-4o"
-@@ -96,11 +100,20 @@ enum ChatProvider: String, CaseIterable, Codable {
+@@ -100,11 +104,20 @@ enum ChatProvider: String, CaseIterable, Codable {
  
      var keychainKey: String {
          switch self {
@@ -1091,10 +1112,10 @@ index c0e1ec3..b148080 100644
  
      var body: some View {
 diff --git a/NotchBuddy/Sources/App/PillCatalog.swift b/NotchBuddy/Sources/App/PillCatalog.swift
-index 6d9b198..f6f6f16 100644
+index 65284e7..11291e9 100644
 --- a/NotchBuddy/Sources/App/PillCatalog.swift
 +++ b/NotchBuddy/Sources/App/PillCatalog.swift
-@@ -43,8 +43,8 @@ enum PillCatalog {
+@@ -47,8 +47,8 @@ enum PillCatalog {
      // All declared pills in display order.
      static let all: [PillDefinition] = [
          // ── Where you code ───────────────────────────────────────────────────
@@ -1103,8 +1124,8 @@ index 6d9b198..f6f6f16 100644
 +        .init(id: "integration_claude",  name: "Orca",        color: "#F5F6F8",
 +              category: .workspace, subtitle: "Claude Code host", source: .claudeCode),
          .init(id: "agent_cursor",        name: "Cursor",      color: "#C0C4CC",
-               category: .workspace, subtitle: "Integration",  source: .agent,  comingSoon: true),
-         .init(id: "agent_codex",         name: "Codex",       color: "#2DD4BF",
+               category: .workspace, subtitle: "Integration",  source: .agent),
+         .init(id: "agent_antigravity",   name: "Antigravity", color: "#E879F9",
 diff --git a/NotchBuddy/Sources/App/RelayServer.swift b/NotchBuddy/Sources/App/RelayServer.swift
 new file mode 100644
 index 0000000..cab790b
@@ -1412,7 +1433,7 @@ index 0000000..cab790b
 +    }
 +}
 diff --git a/NotchBuddy/Sources/App/SettingsView.swift b/NotchBuddy/Sources/App/SettingsView.swift
-index f9ee07e..a67bfa9 100644
+index 2f84161..2a4716f 100644
 --- a/NotchBuddy/Sources/App/SettingsView.swift
 +++ b/NotchBuddy/Sources/App/SettingsView.swift
 @@ -5,6 +5,8 @@ import AppKit
@@ -1697,7 +1718,7 @@ index f9ee07e..a67bfa9 100644
                  GroupBox("Gemini CLI Hooks") {
                      VStack(alignment: .leading, spacing: 10) {
                          Text(geminiHooksInstalled
-@@ -633,6 +862,7 @@ struct SettingsView: View {
+@@ -612,6 +841,7 @@ struct SettingsView: View {
              statusMessage = "✓ Hooks installed in ~/.claude/settings.json"
              pendingHookJSON = ""
              hookNeedsUpdate = false
@@ -1705,7 +1726,7 @@ index f9ee07e..a67bfa9 100644
          } catch {
              statusMessage = "❌ Write error: \(error.localizedDescription)"
          }
-@@ -642,6 +872,7 @@ struct SettingsView: View {
+@@ -621,6 +851,7 @@ struct SettingsView: View {
          do {
              try HookServer.shared.uninstallClaudeHooks()
              statusMessage = "✓ Hooks removed."

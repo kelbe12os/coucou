@@ -45,8 +45,10 @@ settings_json() {
   echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 }
 
-readonly UPSTREAM_URL="https://github.com/Louis-CFM/coucou.git"
-readonly UPSTREAM_REF_DEFAULT="8a5c263"
+# The fork carries the Orca changes as commits on branch "orca", merged with upstream main.
+readonly UPSTREAM_URL="https://github.com/kelbe12os/coucou.git"
+readonly UPSTREAM_REF_DEFAULT="orca"
+readonly ORIGINAL_UPSTREAM_URL="https://github.com/Louis-CFM/coucou.git"
 readonly APP_ID="fr.louisraille.NotchBuddy"
 readonly APP_DST="/Applications/Coucou.app"
 readonly SUPPORT_DIR="$HOME/Library/Application Support/NotchBuddy"
