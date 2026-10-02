@@ -37,6 +37,10 @@ struct SettingsView: View {
     @State private var relayInstalled: Bool = HookServer.statusLineRelayInstalled()
     @State private var zaiKey: String = ZaiKey.resolve()?.key ?? ""
     @State private var zaiKeySource: String? = ZaiKey.resolve()?.source
+    @State private var relayToken: String = RelayServer.token()
+    @State private var relayTailnetName: String = ""
+    @State private var relayTestResult: String = ""
+    @State private var relayPortText: String = String(AppState.shared.relayPort)
 
     private func confirmRelayInstall() {
         let alert = NSAlert()
@@ -66,6 +70,41 @@ struct SettingsView: View {
         let r = ZaiKey.resolve()
         zaiKeySource = r?.source
         zaiKey = r?.key ?? ""
+    }
+
+    private func applyRelayPort() {
+        guard let p = Int(relayPortText), (1024...65535).contains(p) else {
+            statusMessage = "❌ Port must be between 1024 and 65535."; return
+        }
+        state.relayPort = p
+        if state.relayEnabled { RelayServer.shared.restart(port: UInt16(p)) }
+        statusMessage = "✓ Relay port set to \(p)."
+    }
+
+    private func testRelay() {
+        guard state.relayEnabled else { relayTestResult = "relay is off"; return }
+        let port = state.relayPort
+        let token = relayToken
+        relayTestResult = "testing…"
+        Task {
+            guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return }
+            var req = URLRequest(url: url, timeoutInterval: 5)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                relayTestResult = code == 200 ? "ok: \(String(data: data, encoding: .utf8) ?? "")" : "HTTP \(code)"
+            } catch {
+                relayTestResult = "failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func lookupTailnetName() {
+        Task.detached {
+            let name = RelayServer.tailnetName() ?? "Tailscale not running or CLI not found"
+            await MainActor.run { relayTailnetName = name }
+        }
     }
 
     #if !APPSTORE
@@ -300,6 +339,54 @@ struct SettingsView: View {
                     }
                     .padding(6)
                 }
+
+                GroupBox("Remote sessions") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Claude Code sessions on other machines reach the notch through this relay. Each event is forwarded to Coucou over HTTP with a token; approvals work the same as local ones.")
+                            .font(.system(size: 12)).foregroundColor(.secondary)
+                        Toggle("Enable relay", isOn: $state.relayEnabled)
+                            .onChange(of: state.relayEnabled) { _, on in
+                                if on { RelayServer.shared.start(port: UInt16(state.relayPort)) } else { RelayServer.shared.stop() }
+                                relayTestResult = ""
+                            }
+                        HStack(spacing: 8) {
+                            Text("Port").font(.system(size: 12))
+                            TextField("6771", text: $relayPortText)
+                                .textFieldStyle(.roundedBorder).frame(width: 80)
+                                .onSubmit { applyRelayPort() }
+                            Button("Apply") { applyRelayPort() }
+                        }
+                        HStack(spacing: 8) {
+                            Text("Token").font(.system(size: 12))
+                            Text(relayToken).font(.system(size: 11, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(relayToken, forType: .string)
+                                statusMessage = "✓ Token copied."
+                            }
+                            Button("Regenerate") {
+                                relayToken = RelayServer.regenerateToken()
+                                statusMessage = "✓ New token. Update the remote machines."
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("This Mac on the LAN: \(ProcessInfo.processInfo.hostName)")
+                                .font(.system(size: 11, design: .monospaced))
+                            Text("On the tailnet: \(relayTailnetName.isEmpty ? "looking up…" : relayTailnetName)")
+                                .font(.system(size: 11, design: .monospaced))
+                        }
+                        HStack(spacing: 10) {
+                            Button("Test") { testRelay() }
+                            if !relayTestResult.isEmpty {
+                                Text(relayTestResult).font(.system(size: 11)).foregroundColor(.secondary)
+                            }
+                        }
+                        Text("Remote install: scripts/remote/ in the coucou-orca repo. Point it at one of the names above, this port and the token.")
+                            .font(.system(size: 10.5)).foregroundColor(.secondary)
+                    }
+                    .padding(6)
+                }
+                .task { lookupTailnetName() }
 
                 // MARK: Gemini CLI Hooks / Antigravity Hooks
                 #if !APPSTORE

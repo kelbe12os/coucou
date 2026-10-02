@@ -261,6 +261,14 @@ final class AppState: ObservableObject {
             || zaiUsage.updatedAt != nil
     }
 
+    // MARK: - Remote relay (HTTP bridge for Claude Code sessions on other machines)
+    @Published var relayEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(relayEnabled, forKey: "relayEnabled") }
+    }
+    @Published var relayPort: Int = 6771 {
+        didSet { UserDefaults.standard.set(relayPort, forKey: "relayPort") }
+    }
+
     // Pending API result
     @Published var searchResult: SearchResult? = nil
 
@@ -313,6 +321,8 @@ final class AppState: ObservableObject {
         if let v = ud.string(forKey: "claudeCodeModel"), !v.isEmpty { claudeCodeModel = v }
         if let d = ud.data(forKey: "claudeUsage"),
            let u = try? JSONDecoder().decode(ClaudeUsage.self, from: d) { claudeUsage = u }
+        if let v = ud.object(forKey: "relayEnabled") as? Bool { relayEnabled = v }
+        if let v = ud.object(forKey: "relayPort") as? Int, (1024...65535).contains(v) { relayPort = v }
         // Migrate old 60s default → 15s
         if let v = ud.object(forKey: "autoCloseInterval") as? Double {
             autoCloseInterval = (v == 60) ? 15 : v

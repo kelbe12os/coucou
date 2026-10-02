@@ -192,7 +192,10 @@ final class HookServer: @unchecked Sendable {
         let sessionId = payload["session_id"] as? String ?? "unknown"
         let cwd = payload["cwd"] as? String ?? ""
         let rawName = URL(fileURLWithPath: cwd).lastPathComponent
-        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
+        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
+        if let host = payload["remote_host"] as? String, !host.isEmpty {
+            projectName += " @ " + host
+        }
 
         // Determine which pill this event belongs to.
         // coucou_agent must be lowercase, digits and hyphens, ≤ 24 chars.
@@ -371,7 +374,7 @@ final class HookServer: @unchecked Sendable {
     /// Terminals whose Claude Code sessions show in the island and get approval cards.
     /// Upstream only accepts VS Code; this fork also accepts Orca panes (TERM_PROGRAM=Orca,
     /// bundle com.stablyai.orca) and Ghostty. Add more tokens here to support other terminals.
-    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca", "ghostty"]
+    private static let supportedTerminalTokens = ["vscode", "orca", "com.stablyai.orca", "ghostty", "remote"]
 
     static func isSupportedTerminal(termProgram: String, bundleId: String) -> Bool {
         let t = termProgram.lowercased(), b = bundleId.lowercased()
@@ -386,7 +389,10 @@ final class HookServer: @unchecked Sendable {
         let sessionId = payload["session_id"] as? String ?? "unknown"
         let cwd       = payload["cwd"]        as? String ?? ""
         let rawName   = URL(fileURLWithPath: cwd).lastPathComponent
-        let projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
+        var projectName = aliasProjectName(rawName.isEmpty ? "Session" : rawName)
+        if let host = payload["remote_host"] as? String, !host.isEmpty {
+            projectName += " @ " + host
+        }
 
         // External agents (coucou_agent) do not yet get an approval card — answering
         // would show a card that looks like a Claude Code request. Reply immediately

@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CalcomPoller.shared.start()
         NotionPoller.shared.start()
         ZaiPoller.shared.start()
+        if AppState.shared.relayEnabled { RelayServer.shared.start(port: UInt16(AppState.shared.relayPort)) }
         NotificationCenter.default.addObserver(self, selector: #selector(openSettings),
                                                name: .openFullSettings, object: nil)
     }
