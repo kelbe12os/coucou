@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var showDiff: Bool = false
     @State private var pendingHookJSON: String = ""
     @State private var hookNeedsUpdate: Bool = HookServer.hooksNeedUpdate()
+    @State private var claudeHooksInstalled: Bool = HookServer.claudeHooksInstalled()
 
     #if !APPSTORE
     @State private var geminiHooksInstalled: Bool = HookServer.geminiHooksInstalled()
@@ -199,6 +200,15 @@ struct SettingsView: View {
                 // MARK: Hooks
                 GroupBox("Claude Code Hooks") {
                     VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 6) {
+                            Circle().fill(claudeHooksInstalled ? Color(hex: "#22C55E") : Color(hex: "#F4505E"))
+                                .frame(width: 8, height: 8)
+                            Text(claudeHooksInstalled
+                                 ? "Installed in ~/.claude/settings.json — Claude Code sessions in Orca report to the notch"
+                                 : "Not installed — click Install hooks and confirm the diff")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
                         if hookNeedsUpdate {
                             HStack(spacing: 6) {
                                 Image(systemName: "exclamationmark.triangle.fill")
@@ -671,6 +681,7 @@ struct SettingsView: View {
             statusMessage = "✓ Hooks installed in ~/.claude/settings.json"
             pendingHookJSON = ""
             hookNeedsUpdate = false
+            claudeHooksInstalled = HookServer.claudeHooksInstalled()
         } catch {
             statusMessage = "❌ Write error: \(error.localizedDescription)"
         }
@@ -680,6 +691,7 @@ struct SettingsView: View {
         do {
             try HookServer.shared.uninstallClaudeHooks()
             statusMessage = "✓ Hooks removed."
+            claudeHooksInstalled = HookServer.claudeHooksInstalled()
         } catch {
             statusMessage = "❌ \(error.localizedDescription)"
         }

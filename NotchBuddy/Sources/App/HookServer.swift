@@ -576,6 +576,22 @@ final class HookServer: @unchecked Sendable {
 
     // MARK: - Outdated hook detection
 
+    /// True when ~/.claude/settings.json carries a Coucou hook on SessionStart (the installer writes all events together).
+    static func claudeHooksInstalled() -> Bool {
+        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.json")
+        guard let data = try? Data(contentsOf: settingsURL),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = settings["hooks"] as? [String: Any],
+              let groups = hooks["SessionStart"] as? [[String: Any]] else { return false }
+        return groups.contains { group in
+            (group["hooks"] as? [[String: Any]])?.contains { hook in
+                let cmd = hook["command"] as? String ?? ""
+                return cmd.contains("NotchBuddy") || cmd.contains("coucou")
+            } ?? false
+        }
+    }
+
     /// Returns true if settings.json has a Coucou PermissionRequest hook with timeout < 120s.
     static func hooksNeedUpdate() -> Bool {
         let settingsURL = FileManager.default.homeDirectoryForCurrentUser
